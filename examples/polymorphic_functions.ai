@@ -1,0 +1,69 @@
+-- Comprehensive polymorphic functions example
+
+data Nat : Type where
+  Z : Nat
+  S : Nat -> Nat
+
+data Bool : Type where
+  True : Bool
+  False : Bool
+
+-- Parameterized data types not yet fully supported
+-- data List (A : Type) : Type where
+--   Nil : List A
+--   Cons : A -> List A -> List A
+
+-- Identity function
+id : {A : Type} -> A -> A
+id x = x
+
+-- Const function  
+const : {A : Type} -> {B : Type} -> A -> B -> A
+const x y = x
+
+-- Function composition
+compose : {A : Type} -> {B : Type} -> {C : Type} -> (B -> C) -> (A -> B) -> A -> C
+compose f g x = f (g x)
+
+-- Flip function
+flip : {A : Type} -> {B : Type} -> {C : Type} -> (A -> B -> C) -> B -> A -> C
+flip f x y = f y x
+
+-- Examples with implicit inference
+example1 : Nat
+example1 = id 42
+
+example2 : Bool
+example2 = id True
+
+example3 : Nat
+example3 = const {Nat} {Bool} 1 True
+
+-- Example with explicit type application
+example4 : Nat
+example4 = id {Nat} 100
+
+-- Higher-order examples
+not : Bool -> Bool
+not True = False
+not False = True
+
+twice : {A : Type} -> (A -> A) -> A -> A
+twice f x = f (f x)
+
+example5 : Bool
+example5 = twice {Bool} not True
+
+example6 : Nat
+example6 = twice {Nat} S Z
+
+-- Function that takes a polymorphic function
+-- NOTE: This requires higher-rank polymorphism which is not yet supported
+-- apply_to_true : ({A : Type} -> A -> A) -> Bool
+-- apply_to_true f = f True
+
+-- example7 : Bool
+-- example7 = apply_to_true id
+
+main : Nat
+main = example6

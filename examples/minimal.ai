@@ -1,0 +1,31 @@
+-- Minimal working example
+
+-- Define natural numbers
+data Nat : Type where
+  Z : Nat
+  S : Nat -> Nat
+
+-- Define booleans  
+data Bool : Type where
+  True : Bool
+  False : Bool
+
+-- Simple values using constructors
+zero : Nat
+zero = Z
+
+one : Nat
+one = S Z
+
+two : Nat
+two = S (S Z)
+
+yes : Bool
+yes = True
+
+no : Bool
+no = False
+
+-- Main value to display
+main : Nat
+main = S (S (S Z))

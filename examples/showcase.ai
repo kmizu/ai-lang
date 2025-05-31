@@ -1,0 +1,54 @@
+-- Showcase of ai-lang's working features
+
+-- Data type definitions
+data Nat : Type where
+  Z : Nat
+  S : Nat -> Nat
+
+data Bool : Type where
+  True : Bool
+  False : Bool
+
+-- Polymorphic identity function
+id : {A : Type} -> A -> A
+id x = x
+
+-- Examples of implicit type inference
+example1 : Nat
+example1 = id Z  -- {Nat} is inferred
+
+example2 : Bool
+example2 = id True  -- {Bool} is inferred
+
+-- Examples of explicit type application
+example3 : Nat
+example3 = id {Nat} (S Z)
+
+example4 : Bool
+example4 = id {Bool} False
+
+-- Pattern matching
+not : Bool -> Bool
+not True = False
+not False = True
+
+-- Recursive functions
+plus : Nat -> Nat -> Nat
+plus Z n = n
+plus (S m) n = S (plus m n)
+
+-- Function composition example
+example5 : Nat
+example5 = plus (S Z) (S (S Z))
+
+-- Using literals
+example6 : Nat
+example6 = 42  -- Nat literals work
+
+-- List literals work but need proper List type definition
+-- example7 = [1, 2, 3]
+-- example8 = [True, False, True]
+
+-- Main function
+main : Nat
+main = example5

@@ -1,0 +1,103 @@
+-- Demo of ai-lang features
+
+-- Data type definitions
+data Nat : Type where
+  Z : Nat
+  S : Nat -> Nat
+
+data Bool : Type where
+  True : Bool
+  False : Bool
+
+-- Natural numbers
+zero : Nat
+zero = Z
+
+one : Nat
+one = S Z
+
+two : Nat
+two = S (S Z)
+
+three : Nat
+three = S two
+
+-- Boolean operations
+not : Bool -> Bool
+not True = False
+not False = True
+
+and : Bool -> Bool -> Bool
+and True True = True
+and True False = False
+and False True = False
+and False False = False
+
+or : Bool -> Bool -> Bool
+or True _ = True
+or False b = b
+
+-- Natural number operations
+isZero : Nat -> Bool
+isZero Z = True
+isZero (S n) = False
+
+pred : Nat -> Nat
+pred Z = Z
+pred (S n) = n
+
+plus : Nat -> Nat -> Nat
+plus Z n = n
+plus (S m) n = S (plus m n)
+
+mult : Nat -> Nat -> Nat
+mult Z n = Z
+mult (S m) n = plus n (mult m n)
+
+-- Factorial function
+fact : Nat -> Nat
+fact Z = S Z
+fact (S n) = mult (S n) (fact n)
+
+-- Test values
+test1 : Bool
+test1 = not True  -- False
+
+test2 : Bool
+test2 = and True False  -- False
+
+test3 : Bool
+test3 = or False True  -- True
+
+test4 : Bool
+test4 = isZero zero  -- True
+
+test5 : Nat
+test5 = pred three  -- S (S Z) = 2
+
+test6 : Nat
+test6 = plus two three  -- S (S (S (S (S Z)))) = 5
+
+test7 : Nat
+test7 = mult two three  -- S (S (S (S (S (S Z))))) = 6
+
+test8 : Nat
+test8 = fact three  -- 6
+
+-- Polymorphic functions
+id : {A : Type} -> A -> A
+id x = x
+
+const : {A : Type} -> {B : Type} -> A -> B -> A
+const x y = x
+
+-- Using polymorphic functions
+test9 : Nat
+test9 = id {Nat} (plus one two)
+
+test10 : Bool
+test10 = const {Bool} {Nat} True Z
+
+-- Main function
+main : Nat
+main = test8

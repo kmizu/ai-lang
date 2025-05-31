@@ -1,0 +1,43 @@
+-- Simple demo of ai-lang
+
+-- Define natural numbers
+data Nat : Type where
+  Z : Nat
+  S : Nat -> Nat
+
+-- Define booleans
+data Bool : Type where
+  True : Bool
+  False : Bool
+
+-- Simple values
+zero : Nat
+zero = Z
+
+one : Nat
+one = S Z
+
+two : Nat
+two = S (S Z)
+
+-- Boolean function
+not : Bool -> Bool
+not True = False
+not False = True
+
+-- Test the not function
+testNot : Bool
+testNot = not True
+
+-- Natural number predicate
+isZero : Nat -> Bool
+isZero Z = True
+isZero (S n) = False
+
+-- Test isZero
+testIsZero : Bool
+testIsZero = isZero zero
+
+-- Main result to display
+main : Nat
+main = two

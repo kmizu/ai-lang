@@ -1,0 +1,53 @@
+-- Basic ai-lang example
+
+-- Natural numbers
+data Nat : Type where
+  Z : Nat
+  S : Nat -> Nat
+
+-- Booleans
+data Bool : Type where
+  True : Bool
+  False : Bool
+
+-- Basic arithmetic
+add : Nat -> Nat -> Nat
+add Z y = y
+add (S x) y = S (add x y)
+
+sub : Nat -> Nat -> Nat
+sub Z _ = Z
+sub x Z = x
+sub (S x) (S y) = sub x y
+
+-- Boolean operations
+not : Bool -> Bool
+not True = False
+not False = True
+
+-- Comparison
+isZero : Nat -> Bool
+isZero Z = True
+isZero (S _) = False
+
+-- Identity function (polymorphic)
+id : {A : Type} -> A -> A
+id x = x
+
+-- Constant function (polymorphic)
+const : {A : Type} -> {B : Type} -> A -> B -> A
+const x _ = x
+
+-- Example values
+two : Nat
+two = S (S Z)
+
+three : Nat  
+three = S two
+
+five : Nat
+five = add two three
+
+-- Main result
+main : Nat
+main = five

@@ -1,0 +1,84 @@
+-- Demonstration of polymorphic type features in ai-lang
+
+data Nat : Type where
+  Z : Nat
+  S : Nat -> Nat
+
+data Bool : Type where
+  True : Bool
+  False : Bool
+
+-- Basic polymorphic functions
+id : {A : Type} -> A -> A
+id x = x
+
+const : {A : Type} -> {B : Type} -> A -> B -> A
+const x y = x
+
+swap : {A : Type} -> {B : Type} -> {C : Type} -> (A -> B -> C) -> B -> A -> C
+swap f x y = f y x
+
+----------------------------------------
+-- Working examples
+----------------------------------------
+
+-- Implicit type inference for simple cases
+example1 : Nat
+example1 = id 42
+
+example2 : Bool
+example2 = id True
+
+-- Using explicit type parameters for const
+example3 : Nat
+example3 = const {Nat} {Bool} 1 False
+
+-- Explicit type application
+example4 : Bool
+example4 = id {Bool} False
+
+example5 : Nat
+example5 = const {Nat} {Bool} 42 True
+
+-- Higher-order functions with explicit type parameters
+twice : {A : Type} -> (A -> A) -> A -> A
+twice f x = f (f x)
+
+not : Bool -> Bool
+not True = False
+not False = True
+
+example6 : Bool
+example6 = twice {Bool} not True
+
+succ : Nat -> Nat
+succ n = S n
+
+example7 : Nat
+example7 = twice {Nat} succ Z
+
+----------------------------------------
+-- Current limitations
+----------------------------------------
+
+-- 1. Cannot infer type parameters from function arguments
+-- bad_example1 = twice succ Z  -- Error: cannot infer A from succ
+
+-- 2. Cannot infer multiple implicit parameters
+-- bad_example2 = const 1 True  -- Error: cannot infer both A and B
+
+-- 3. No higher-rank polymorphism
+-- apply_poly : ({A : Type} -> A -> A) -> Nat -> Nat
+-- apply_poly f n = f n  -- Error: cannot instantiate polymorphic f
+
+-- 4. Parameterized data types not fully supported
+-- data List (A : Type) : Type where
+--   Nil : List A
+--   Cons : A -> List A -> List A
+
+----------------------------------------
+-- Main function
+----------------------------------------
+
+main : Nat
+main = example7
