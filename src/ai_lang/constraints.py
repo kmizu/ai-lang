@@ -286,6 +286,61 @@ class ConstraintSolver:
             self.substitution.bind(constraint.right, VType(Level(0)))
 
 
+def _get_implicit_param_name(app_term: Term, param_index: int) -> Optional[str]:
+    """Get the name of an implicit parameter by index."""
+    # Try to extract from the function being applied
+    base_fun = app_term
+    while isinstance(base_fun, TApp):
+        base_fun = base_fun.function
+    
+    # If it's a variable, we can get the parameter name from the type
+    # This would require access to the type checker's context
+    # For now, we'll use generic names
+    if param_index == 0:
+        return "A"
+    elif param_index == 1:
+        return "B"
+    elif param_index == 2:
+        return "C"
+    else:
+        return f"T{param_index + 1}"
+
+
+def _get_implicit_param_type(fun_type: Value, param_index: int) -> Optional[Value]:
+    """Get the type of an implicit parameter by index."""
+    current_type = fun_type
+    current_idx = 0
+    
+    while isinstance(current_type, VPi):
+        if current_type.implicit:
+            if current_idx == param_index:
+                return current_type.domain
+            current_idx += 1
+        # Apply dummy value to continue
+        dummy = VNeutral(NVar(1000 + current_idx))
+        current_type = current_type.codomain_closure.apply(dummy)
+    
+    return None
+
+
+def _format_type(type_val: Value) -> str:
+    """Format a type value for user-friendly display."""
+    if isinstance(type_val, VType):
+        return "Type"
+    elif isinstance(type_val, VConstructor):
+        if type_val.args:
+            args_str = " ".join(str(arg) for arg in type_val.args)
+            return f"{type_val.name} {args_str}"
+        return type_val.name
+    elif isinstance(type_val, VPi):
+        if type_val.implicit:
+            return f"{{{type_val.name} : {_format_type(type_val.domain)}}} -> ..."
+        else:
+            return f"({type_val.name} : {_format_type(type_val.domain)}) -> ..."
+    else:
+        return str(type_val)
+
+
 def infer_implicit_args_with_constraints(
     app_term: Term,
     fun_type: Value,
@@ -412,7 +467,27 @@ def infer_implicit_args_with_constraints(
             else:
                 # Couldn't infer this parameter
                 # print(f"DEBUG: Could not infer implicit parameter {i+1} (var {metavar_term.var})")
-                raise TypeCheckError(f"Could not infer implicit parameter {i+1}")
+                # Get the name of the implicit parameter if available
+                param_name = _get_implicit_param_name(app_term, i)
+                param_type = _get_implicit_param_type(fun_type, i)
+                
+                # Build a more informative error message
+                if param_name:
+                    error_msg = f"Could not infer implicit type parameter '{param_name}' (parameter {i+1})"
+                else:
+                    error_msg = f"Could not infer implicit parameter {i+1}"
+                
+                # Add information about what type was expected
+                if param_type:
+                    error_msg += f"\nExpected a value of type: {_format_type(param_type)}"
+                
+                # Add information about what we tried to infer from
+                if explicit_args:
+                    error_msg += f"\nTried to infer from {len(explicit_args)} explicit argument(s)"
+                    if len(explicit_args) < len(type_vars):
+                        error_msg += f" (need at least {len(type_vars)} arguments to infer all {len(type_vars)} implicit parameters)"
+                
+                raise TypeCheckError(error_msg)
         else:
             concrete_implicit_args.append(metavar_term)
     

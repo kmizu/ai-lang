@@ -1,0 +1,69 @@
+-- Demonstration of higher-rank polymorphism in ai-lang
+
+data Nat : Type where
+  Z : Nat
+  S : Nat -> Nat
+
+data Bool : Type where
+  True : Bool
+  False : Bool
+
+-- Basic polymorphic identity function
+id : {A : Type} -> A -> A
+id x = x
+
+-- Another polymorphic identity with different parameter name
+-- This demonstrates alpha-equivalence: {A : Type} -> A -> A ≡ {B : Type} -> B -> B
+id2 : {B : Type} -> B -> B
+id2 y = y
+
+-- Function that takes a polymorphic function as argument (rank-2)
+apply_to_nat : ({A : Type} -> A -> A) -> Nat -> Nat
+apply_to_nat f n = f {Nat} n
+
+-- Test: both id and id2 should work due to alpha-equivalence
+test1 : Nat
+test1 = apply_to_nat id (S (S Z))
+
+test2 : Nat  
+test2 = apply_to_nat id2 (S Z)
+
+-- Higher-order function that applies a polymorphic function twice
+apply_twice : {B : Type} -> ({A : Type} -> A -> A) -> B -> B
+apply_twice f x = f {B} (f {B} x)
+
+-- Test with different types
+test3 : Nat
+test3 = apply_twice {Nat} id (S Z)
+
+test4 : Bool
+test4 = apply_twice {Bool} id True
+
+-- Compose two polymorphic functions
+compose_poly : {C : Type} -> ({A : Type} -> A -> A) -> ({B : Type} -> B -> B) -> C -> C
+compose_poly f g x = f {C} (g {C} x)
+
+-- Test composition
+test5 : Nat
+test5 = compose_poly {Nat} id id2 Z
+
+-- Return a polymorphic function (rank-2 return type)
+make_id : Nat -> ({A : Type} -> A -> A)
+make_id n = id
+
+-- Use the returned polymorphic function
+test6 : Bool
+test6 = (make_id Z) {Bool} False
+
+-- Polymorphic subsumption example
+-- A polymorphic function can be used where a monomorphic one is expected
+apply_mono : (Nat -> Nat) -> Nat -> Nat
+apply_mono f n = f (f n)
+
+-- This works even though id is polymorphic, not just Nat -> Nat
+test7 : Nat
+test7 = apply_mono (id {Nat}) (S Z)
+
+-- Main example combining everything
+main : Nat
+main = test3

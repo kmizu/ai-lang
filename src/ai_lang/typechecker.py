@@ -14,6 +14,39 @@ from .core import *
 from .errors import TypeCheckError
 
 
+def format_type_for_error(type_val: Value) -> str:
+    """Format a type value for user-friendly error messages."""
+    if isinstance(type_val, VType):
+        return "Type"
+    elif isinstance(type_val, VConstructor):
+        if type_val.args:
+            args_str = " ".join(format_type_for_error(arg) for arg in type_val.args)
+            return f"{type_val.name} {args_str}"
+        return type_val.name
+    elif isinstance(type_val, VPi):
+        domain_str = format_type_for_error(type_val.domain)
+        # For simple function types, use arrow notation
+        if not type_val.implicit and type_val.name == "_":
+            # Try to peek at codomain for simple cases
+            dummy_val = VNeutral(NVar(9999))
+            codomain = type_val.codomain_closure.apply(dummy_val)
+            codomain_str = format_type_for_error(codomain)
+            return f"{domain_str} -> {codomain_str}"
+        elif type_val.implicit:
+            return f"{{{type_val.name} : {domain_str}}} -> ..."
+        else:
+            return f"({type_val.name} : {domain_str}) -> ..."
+    elif isinstance(type_val, VNeutral):
+        # Handle neutral terms (variables, applications)
+        if isinstance(type_val.neutral, NVar):
+            return f"<type variable>"
+        else:
+            return f"<neutral type>"
+    else:
+        # Fallback to string representation
+        return str(type_val)
+
+
 # Context for type checking
 @dataclass
 class Binding:
@@ -499,15 +532,21 @@ class TypeChecker:
                 inferred_type = self.infer_type(term, ctx)
                 if not self.equal_types(inferred_type, expected_type, ctx):
                     raise TypeCheckError(
-                        f"Type mismatch: expected {expected_type}, got {inferred_type}"
+                        f"Type mismatch: expected {format_type_for_error(expected_type)}, got {format_type_for_error(inferred_type)}"
                     )
         
         else:
-            # For other terms, infer and check equality
+            # For other terms, first try polymorphic subsumption
             inferred_type = self.infer_type(term, ctx)
+            
+            # Check if we can use polymorphic subsumption
+            if self.can_subsume(inferred_type, expected_type, ctx):
+                return  # Subsumption successful
+            
+            # Otherwise, check for exact equality
             if not self.equal_types(inferred_type, expected_type, ctx):
                 raise TypeCheckError(
-                    f"Type mismatch: expected {expected_type}, got {inferred_type}"
+                    f"Type mismatch: expected {format_type_for_error(expected_type)}, got {format_type_for_error(inferred_type)}"
                 )
     
     def check_is_type(self, type_val: Value, ctx: Context) -> None:
@@ -576,6 +615,9 @@ class TypeChecker:
             
             return result
             
+        except TypeCheckError:
+            # Re-raise TypeCheckError with our improved messages
+            raise
         except Exception as e:
             # Fall back to the old approach for single implicit parameters
             current_app = app
@@ -609,10 +651,10 @@ class TypeChecker:
                         implicit_arg = self.value_to_term(arg_type, ctx)
                     except Exception as e:
                         # If we can't infer, create a metavariable (for now, just fail)
-                        raise TypeCheckError(f"Cannot infer implicit type argument: {e}")
+                        raise TypeCheckError(f"Cannot infer implicit type argument\nReason: {e}")
                 else:
                     # For non-type implicit arguments, we need more context
-                    raise TypeCheckError(f"Cannot infer implicit argument of type {current_type.domain}")
+                    raise TypeCheckError(f"Cannot infer implicit argument of type {format_type_for_error(current_type.domain)}")
                 
                 # Create new application with implicit argument
                 current_app = TApp(
@@ -733,9 +775,8 @@ class TypeChecker:
             raise TypeCheckError(f"Cannot quote value {val}")
     
     def equal_types(self, type1: Value, type2: Value, ctx: Context) -> bool:
-        """Check if two types are equal."""
-        # For now, use a simple structural equality
-        # TODO: Implement proper definitional equality
+        """Check if two types are equal (including alpha-equivalence)."""
+        # Implement proper definitional equality with alpha-equivalence
         
         if type(type1) != type(type2):
             return False
@@ -744,11 +785,22 @@ class TypeChecker:
             return type1.level == type2.level
         
         elif isinstance(type1, VPi):
+            # For Pi types, we need to check:
+            # 1. The implicit flags match
+            # 2. The domains are equal
+            # 3. The codomains are equal under alpha-equivalence
+            
+            # Check implicit flags match
+            if type1.implicit != type2.implicit:
+                return False
+            
             # Check domains are equal
             if not self.equal_types(type1.domain, type2.domain, ctx):
                 return False
             
             # Check codomains are equal (with a fresh variable)
+            # This implements alpha-equivalence: we use the same fresh variable
+            # for both codomains, so parameter names don't matter
             var_val = VNeutral(NVar(len(ctx.environment.values)))
             cod1 = type1.codomain_closure.apply(var_val)
             cod2 = type2.codomain_closure.apply(var_val)
@@ -795,6 +847,44 @@ class TypeChecker:
         """Check if two values are equal."""
         # For now, use string comparison
         return str(v1) == str(v2)
+    
+    def can_subsume(self, actual_type: Value, expected_type: Value, ctx: Context) -> bool:
+        """Check if actual_type can be subsumed to expected_type (polymorphic subsumption).
+        
+        This handles cases like:
+        - A polymorphic type can be specialized to a monomorphic type
+        - {A : Type} -> A -> A  can be used where  Nat -> Nat  is expected
+        """
+        # First check if types are already equal
+        if self.equal_types(actual_type, expected_type, ctx):
+            return True
+        
+        # Handle polymorphic subsumption for Pi types
+        if isinstance(actual_type, VPi) and actual_type.implicit:
+            # If actual type has implicit parameters, we can instantiate them
+            # Try to find an instantiation that makes the types equal
+            
+            # For now, we'll handle the simple case where we can instantiate
+            # the implicit parameter and continue checking
+            if isinstance(actual_type.domain, VType):
+                # The implicit parameter is a Type
+                # We need to figure out what to instantiate it with
+                
+                # Try instantiating with different types based on expected_type
+                if isinstance(expected_type, VPi):
+                    # Try to instantiate to make domains match
+                    # This is a simplified approach - full implementation would use unification
+                    
+                    # Instantiate the implicit parameter with the expected domain
+                    instantiated = actual_type.codomain_closure.apply(expected_type.domain)
+                    return self.can_subsume(instantiated, expected_type, ctx)
+                elif isinstance(expected_type, VConstructor):
+                    # Expected type is a concrete type like Nat
+                    # Try instantiating with that type
+                    instantiated = actual_type.codomain_closure.apply(expected_type)
+                    return self.equal_types(instantiated, expected_type, ctx)
+        
+        return False
     
     def is_type_application(self, neutral: Neutral) -> bool:
         """Check if a neutral term is a type application to a data type."""

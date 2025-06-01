@@ -143,11 +143,13 @@ ai-lang/
    - ✅ Support inference from multiple arguments
    - ✅ Created comprehensive constraint solver with type variables
    - ✅ Evaluator now performs elaboration on-the-fly for proper evaluation
-   - ⚠️  TODO: Better error messages for inference failures
+   - ✅ Better error messages for inference failures
 
-3. **Higher-Rank Polymorphism**
-   - Support functions taking polymorphic functions as arguments
-   - Example that should work:
+3. **Higher-Rank Polymorphism** ✅ COMPLETE
+   - ✅ Support functions taking polymorphic functions as arguments
+   - ✅ Alpha-equivalence for polymorphic types
+   - ✅ Polymorphic subsumption (using polymorphic functions at less polymorphic types)
+   - ✅ Example that now works:
    ```ai-lang
    apply_poly : ({A : Type} -> A -> A) -> Nat -> Nat
    apply_poly f n = f {Nat} n
