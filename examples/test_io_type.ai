@@ -1,0 +1,9 @@
+-- Test IO type directly
+
+-- Test that IO Unit is a valid type
+t : Type
+t = IO Unit
+
+-- Test putStrLn type
+p : String -> IO Unit
+p = putStrLn

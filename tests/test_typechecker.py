@@ -14,7 +14,7 @@ def test_type_check_simple_types():
     """
     
     module = parse(source)
-    checker = type_check_module(module)
+    checker = type_check_module(module, return_checker=True)
     
     # Check that id has the correct type
     assert "id" in checker.global_types
@@ -36,7 +36,7 @@ def test_type_check_data_declarations():
     """
     
     module = parse(source)
-    checker = type_check_module(module)
+    checker = type_check_module(module, return_checker=True)
     
     # Check that constructors are registered
     assert "True" in checker.constructors
@@ -75,7 +75,7 @@ def test_type_check_dependent_types():
     
     # This should type check without errors
     try:
-        checker = type_check_module(module)
+        checker = type_check_module(module, return_checker=True)
         # Pattern matching is not yet implemented, so this will fail
         pytest.skip("Pattern matching not yet implemented")
     except TypeCheckError as e:
@@ -91,7 +91,7 @@ def test_type_check_function_without_signature():
     module = parse(source)
     
     with pytest.raises(TypeCheckError) as exc_info:
-        type_check_module(module)
+        type_check_module(module, return_checker=True)
     
     assert "requires a type signature" in str(exc_info.value)
 
@@ -113,7 +113,7 @@ def test_type_check_literals():
     
     # Literals are not yet fully implemented
     try:
-        checker = type_check_module(module)
+        checker = type_check_module(module, return_checker=True)
         pytest.skip("Literal type checking not yet implemented")
     except (TypeCheckError, KeyError):
         pass  # Expected for now
@@ -127,7 +127,7 @@ def test_type_check_pi_types():
     """
     
     module = parse(source)
-    checker = type_check_module(module)
+    checker = type_check_module(module, return_checker=True)
     
     # Check the type of const
     const_type = checker.global_types["const"]
@@ -146,7 +146,7 @@ def test_type_check_type_universe():
     """
     
     module = parse(source)
-    checker = type_check_module(module)
+    checker = type_check_module(module, return_checker=True)
     
     # Check that f has the correct type
     f_type = checker.global_types["f"]
@@ -164,7 +164,7 @@ def test_type_check_too_many_arguments():
     module = parse(source)
     
     with pytest.raises(TypeCheckError) as exc_info:
-        type_check_module(module)
+        type_check_module(module, return_checker=True)
     
     assert "Too many patterns" in str(exc_info.value)
 
@@ -181,7 +181,7 @@ def test_type_check_type_mismatch():
     # This should fail because x : Nat but we return it as Bool
     # However, without proper pattern support, this might not be caught yet
     try:
-        checker = type_check_module(module)
+        checker = type_check_module(module, return_checker=True)
         # If it succeeds, we need better type checking
         pytest.skip("Type mismatch checking needs improvement")
     except TypeCheckError:

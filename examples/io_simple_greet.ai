@@ -1,0 +1,11 @@
+-- Simple interactive program
+
+-- Sequence two IO actions
+seq : {A : Type} -> {B : Type} -> IO A -> IO B -> IO B
+seq {A} {B} first second = bind {A} {B} first (\_ -> second)
+
+-- Main program
+main : IO Unit
+main = seq {Unit} {Unit} 
+  (putStrLn "Hello! Please enter your name:")
+  (bind {String} {Unit} getLine putStrLn)

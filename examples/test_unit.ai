@@ -1,0 +1,5 @@
+-- Test Unit type
+
+-- Test unit value
+u : Unit
+u = unit

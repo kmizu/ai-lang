@@ -48,6 +48,9 @@ class Evaluator:
             else:
                 # Constructor is a simple value
                 self.global_env[name] = VConstructor(name, [])
+        
+        # Add IO primitives
+        self._init_io_primitives()
     
     def _make_constructor_function(self, name: str, type: Value) -> Value:
         """Create a constructor function value."""
@@ -74,6 +77,56 @@ class Evaluator:
                 )
         
         return make_constructor_closure([])
+    
+    def _init_io_primitives(self):
+        """Initialize IO primitive functions."""
+        # pure : {A : Type} -> A -> IO A
+        def pure_impl(type_arg: Value) -> Value:
+            return VLambda("x", ClosureFunc(lambda x: VIOAction(IOPure(x))), False)
+        self.global_env["pure"] = VLambda("A", ClosureFunc(pure_impl), True)
+        
+        # bind : {A : Type} -> {B : Type} -> IO A -> (A -> IO B) -> IO B
+        def bind_impl(a_type: Value) -> Value:
+            def bind_b(b_type: Value) -> Value:
+                def bind_io(io_a: Value) -> Value:
+                    def bind_cont(cont: Value) -> Value:
+                        if isinstance(io_a, VIOAction):
+                            # Create bind action
+                            def cont_func(a_val: Value) -> IOAction:
+                                result = apply(cont, a_val)
+                                if isinstance(result, VIOAction):
+                                    return result.action
+                                else:
+                                    raise TypeError(f"Continuation must return IO action, got {type(result)}")
+                            return VIOAction(IOBind(io_a.action, cont_func))
+                        else:
+                            raise TypeError(f"bind expects IO action, got {type(io_a)}")
+                    return VLambda("cont", ClosureFunc(bind_cont), False)
+                return VLambda("io_a", ClosureFunc(bind_io), False)
+            return VLambda("B", ClosureFunc(bind_b), True)
+        self.global_env["bind"] = VLambda("A", ClosureFunc(bind_impl), True)
+        
+        # print : String -> IO Unit
+        def print_impl(s: Value) -> Value:
+            if isinstance(s, VString):
+                return VIOAction(IOPrint(s.value))
+            else:
+                raise TypeError(f"print expects String, got {type(s)}")
+        self.global_env["print"] = VLambda("s", ClosureFunc(print_impl), False)
+        
+        # putStrLn : String -> IO Unit
+        def putStrLn_impl(s: Value) -> Value:
+            if isinstance(s, VString):
+                return VIOAction(IOPrint(s.value + "\n"))
+            else:
+                raise TypeError(f"putStrLn expects String, got {type(s)}")
+        self.global_env["putStrLn"] = VLambda("s", ClosureFunc(putStrLn_impl), False)
+        
+        # getLine : IO String
+        self.global_env["getLine"] = VIOAction(IOGetLine())
+        
+        # unit : Unit (the value of type Unit)
+        self.global_env["unit"] = VConstructor("unit", [])
     
     def eval_module(self, module: Module) -> None:
         """Evaluate a module, adding definitions to the global environment."""
@@ -482,6 +535,25 @@ class Evaluator:
             # For other terms, use regular evaluation
             return term.eval(env)
     
+    def execute_io(self, io_action: VIOAction, input_handler: Optional[callable] = None) -> Tuple[Value, List[IOEffect]]:
+        """Execute an IO action, returning the result value and effects."""
+        return io_action.action.execute(input_handler)
+    
+    def run_main_io(self, main_action: Value) -> Value:
+        """Run a main IO action, executing all effects."""
+        if not isinstance(main_action, VIOAction):
+            raise TypeError(f"main must return an IO action, got {type(main_action)}")
+        
+        # Execute the IO action
+        result, effects = self.execute_io(main_action)
+        
+        # Execute the effects
+        for effect in effects:
+            if isinstance(effect, PrintEffect):
+                print(effect.message, end='')
+        
+        return result
+    
     def eval_program(self, source: str) -> Optional[Value]:
         """Evaluate a complete program, returning the last value."""
         from .parser import parse
@@ -505,6 +577,17 @@ class Evaluator:
             if isinstance(decl, FunctionDef) and decl.name.value == "_main":
                 # Evaluate main expression
                 last_value = evaluator.eval_expr(decl.clauses[0].body, {})
+            elif isinstance(decl, FunctionDef) and decl.name.value == "main":
+                # Check if main has IO type
+                main_type = evaluator.type_checker.global_types.get("main")
+                if main_type and isinstance(main_type, VIO):
+                    # Evaluate and run the IO action
+                    main_action = evaluator.global_env.get("main")
+                    if main_action:
+                        last_value = evaluator.run_main_io(main_action)
+                else:
+                    # Regular main function
+                    last_value = evaluator.global_env.get("main")
         
         return last_value
 
@@ -584,6 +667,15 @@ def pretty_print_value(value: Value) -> str:
     
     elif isinstance(value, VType):
         return f"Type{value.level.n}" if value.level.n > 0 else "Type"
+    
+    elif isinstance(value, VIOAction):
+        return "<IO action>"
+    
+    elif isinstance(value, VIO):
+        return f"IO {pretty_print_value(value.result_type)}"
+    
+    elif isinstance(value, VUnit):
+        return "Unit"
     
     else:
         return str(value)

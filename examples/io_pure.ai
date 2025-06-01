@@ -1,0 +1,5 @@
+-- Example using pure to lift values into IO
+
+-- Lift a pure value into IO and print it
+main : IO Unit
+main = bind {String} {Unit} (pure {String} "Hello from pure!") putStrLn

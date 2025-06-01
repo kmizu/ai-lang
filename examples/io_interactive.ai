@@ -1,0 +1,9 @@
+-- Interactive IO example using bind
+
+-- Helper function to greet
+greet : String -> IO Unit
+greet name = putStrLn name
+
+-- Get user's name and greet them
+main : IO Unit
+main = bind {String} {Unit} getLine greet

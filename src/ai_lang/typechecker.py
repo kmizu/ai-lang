@@ -168,12 +168,52 @@ class TypeChecker:
         self.global_types["Nat"] = VType(Level(0))
         self.global_types["Bool"] = VType(Level(0))
         self.global_types["String"] = VType(Level(0))
+        self.global_types["Unit"] = VType(Level(0))
+        
+        # Add IO type constructor: IO : Type -> Type
+        io_type = VPi("A", VType(Level(0)), ConstantClosure(VType(Level(0))), False)
+        self.global_types["IO"] = io_type
         
         # Add Bool constructors
         true_info = DataConstructorInfo("True", VConstructor("Bool", []), "Bool", [], [])
         false_info = DataConstructorInfo("False", VConstructor("Bool", []), "Bool", [], [])
         self.constructors["True"] = true_info
         self.constructors["False"] = false_info
+        
+        # Add Unit constructor
+        unit_info = DataConstructorInfo("unit", VNeutral(NGlobal("Unit")), "Unit", [], [])
+        self.constructors["unit"] = unit_info
+        
+        # Add IO primitives types
+        # pure : {A : Type} -> A -> IO A
+        pure_type = VPi("A", VType(Level(0)), 
+                       Closure(Environment(), TPi("x", TVar(0), 
+                                                 TApp(TGlobal("IO"), TVar(1)), False)), 
+                       True)
+        self.global_types["pure"] = pure_type
+        
+        # bind : {A : Type} -> {B : Type} -> IO A -> (A -> IO B) -> IO B
+        bind_type = VPi("A", VType(Level(0)),
+                       Closure(Environment(), 
+                              TPi("B", TType(Level(0)),
+                                 TPi("io_a", TApp(TGlobal("IO"), TVar(1)),
+                                    TPi("cont", TPi("x", TVar(2), TApp(TGlobal("IO"), TVar(2)), False),
+                                       TApp(TGlobal("IO"), TVar(3)), False), False), True)),
+                       True)
+        self.global_types["bind"] = bind_type
+        
+        # print/putStrLn : String -> IO Unit
+        # We need to use neutral values for types, not their kinds
+        string_type = VNeutral(NGlobal("String"))
+        unit_type = VNeutral(NGlobal("Unit"))
+        
+        print_type = VPi("s", string_type, 
+                        ConstantClosure(VIO(unit_type)), False)
+        self.global_types["print"] = print_type
+        self.global_types["putStrLn"] = print_type
+        
+        # getLine : IO String
+        self.global_types["getLine"] = VIO(string_type)
     
     def raise_error(self, message: str, kind: Optional[ErrorKind] = None, 
                    location: Optional[SourceLocation] = None, **kwargs) -> None:
@@ -195,6 +235,10 @@ class TypeChecker:
             if term.name in self.global_values:
                 return self.global_values[term.name]
             elif term.name in self.global_types:
+                # For built-in types like Nat, Bool, String, return neutral value
+                # when used as a type (not when asking for their type)
+                if term.name in ["Nat", "Bool", "String", "Unit"]:
+                    return VNeutral(NGlobal(term.name))
                 return self.global_types[term.name]
             else:
                 # Return neutral for unknown globals
@@ -204,8 +248,11 @@ class TypeChecker:
             fun_val = self.eval_with_globals(term.function, env)
             arg_val = self.eval_with_globals(term.argument, env)
             
-            # Special handling for type-level applications
-            if isinstance(fun_val, VPi):
+            # Special handling for IO type constructor
+            if isinstance(fun_val, VPi) and isinstance(term.function, TGlobal) and term.function.name == "IO":
+                # When applying IO to a type, create VIO value
+                return VIO(arg_val)
+            elif isinstance(fun_val, VPi):
                 # Apply Pi type by instantiating the codomain
                 return fun_val.codomain_closure.apply(arg_val)
             else:
@@ -444,13 +491,8 @@ class TypeChecker:
             # Check that the type has a valid sort
             self.check_is_type(type_type, ctx)
             
-            # Store the type
-            # Don't fully evaluate - preserve the structure for type checking
-            if isinstance(type_term, TApp) and isinstance(type_term.function, TGlobal):
-                # Special case for applied data types - store as neutral
-                type_val = VNeutral(self.term_to_neutral(type_term))
-            else:
-                type_val = self.eval_with_globals(type_term, ctx.environment)
+            # Store the type - always evaluate properly
+            type_val = self.eval_with_globals(type_term, ctx.environment)
             self.add_global(decl.name.value, type_val)
         
         elif isinstance(decl, FunctionDef):
@@ -704,11 +746,11 @@ class TypeChecker:
         
         elif isinstance(term, TLiteral):
             if isinstance(term.value, int):
-                return VConstructor("Nat", [])  # 42 : Nat
+                return VNeutral(NGlobal("Nat"))  # 42 : Nat
             elif isinstance(term.value, bool):
-                return VConstructor("Bool", [])  # True : Bool
+                return VNeutral(NGlobal("Bool"))  # True : Bool
             elif isinstance(term.value, str):
-                return VConstructor("String", [])  # "hello" : String
+                return VNeutral(NGlobal("String"))  # "hello" : String
             else:
                 raise TypeCheckError(f"Unknown literal type: {type(term.value)}")
         
@@ -745,6 +787,12 @@ class TypeChecker:
                 return self.global_types[term.name]
             else:
                 raise TypeCheckError(f"Unknown global: {term.name}")
+        
+        elif isinstance(term, TIO):
+            # IO A : Type when A : Type
+            result_type_type = self.infer_type(term.result_type, ctx)
+            self.check_is_type(result_type_type, ctx)
+            return VType(Level(0))  # IO types are in Type0
         
         else:
             raise TypeCheckError(f"Cannot infer type of {type(term)}")
@@ -1063,6 +1111,19 @@ class TypeChecker:
             # For neutral values, we need to check if they represent the same computation
             return self.equal_neutrals(type1.neutral, type2.neutral)
         
+        elif isinstance(type1, VNeutral) and isinstance(type2, VIO):
+            # Check if neutral represents IO applied to something
+            if isinstance(type1.neutral, NApp):
+                fun_neutral = type1.neutral.function
+                if isinstance(fun_neutral, NGlobal) and fun_neutral.name == "IO":
+                    # Compare the argument with IO's result type
+                    return self.equal_types(type1.neutral.argument, type2.result_type, ctx)
+            return False
+        
+        elif isinstance(type1, VIO) and isinstance(type2, VNeutral):
+            # Symmetric case
+            return self.equal_types(type2, type1, ctx)
+        
         elif isinstance(type1, VNeutral) and isinstance(type2, VType):
             # Special case: a neutral term might represent a type
             # This happens with parameterized data types like (List Nat)
@@ -1074,6 +1135,20 @@ class TypeChecker:
         elif isinstance(type1, VType) and isinstance(type2, VNeutral):
             # Symmetric case
             return self.equal_types(type2, type1, ctx)
+        
+        elif isinstance(type1, VConstructor) and isinstance(type2, VNeutral):
+            # Check if neutral represents the same type constructor
+            if isinstance(type2.neutral, NGlobal):
+                return type1.name == type2.neutral.name and len(type1.args) == 0
+            return False
+        
+        elif isinstance(type1, VNeutral) and isinstance(type2, VConstructor):
+            # Symmetric case
+            return self.equal_types(type2, type1, ctx)
+        
+        elif isinstance(type1, VIO) and isinstance(type2, VIO):
+            # Check IO types have equal result types
+            return self.equal_types(type1.result_type, type2.result_type, ctx)
         
         # For other types, use structural equality
         # TODO: Implement proper equality
@@ -1331,9 +1406,9 @@ class TypeChecker:
             # Check for built-in types
             if name == "Type":
                 return TType(Level(0))
-            elif name in ["Nat", "Bool", "String"]:
-                # These are just type constants
-                return TConstructor(name, [])
+            elif name in ["Nat", "Bool", "String", "Unit"]:
+                # These are global type references
+                return TGlobal(name)
             
             # Check for user-defined types
             if name in self.data_types:

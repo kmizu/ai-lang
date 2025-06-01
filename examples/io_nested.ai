@@ -1,0 +1,15 @@
+-- Example of nested IO operations
+
+-- Ask for two names and greet both
+askTwoNames : IO Unit
+askTwoNames = 
+  bind {String} {Unit} 
+    (bind {Unit} {String} (putStrLn "Enter first name:") (\u1 -> getLine))
+    (\name1 -> 
+      bind {String} {Unit}
+        (bind {Unit} {String} (putStrLn "Enter second name:") (\u2 -> getLine))
+        (\name2 ->
+          bind {Unit} {Unit} (putStrLn name1) (\u3 -> putStrLn name2)))
+
+main : IO Unit
+main = askTwoNames

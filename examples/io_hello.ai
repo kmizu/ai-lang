@@ -1,0 +1,5 @@
+-- Simple Hello World example with IO
+
+-- Main function that performs IO
+main : IO Unit
+main = putStrLn "Hello, World!"

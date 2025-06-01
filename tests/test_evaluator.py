@@ -23,7 +23,7 @@ def eval_program(source: str) -> Value:
             source = '\n'.join(lines)
     
     module = parse(source)
-    checker = type_check_module(module)
+    checker = type_check_module(module, return_checker=True)
     evaluator = Evaluator(checker)
     evaluator.eval_module(module)
     

@@ -1,0 +1,9 @@
+-- Example of sequencing IO actions
+
+-- Print two messages in sequence
+printTwo : String -> String -> IO Unit
+printTwo msg1 msg2 = 
+  bind {Unit} {Unit} (putStrLn msg1) (\u -> putStrLn msg2)
+
+main : IO Unit
+main = printTwo "First message" "Second message"

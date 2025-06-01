@@ -207,14 +207,29 @@ def main(filename: Optional[str] = None,
             # Output results
             if "main" in evaluator.global_env:
                 result = evaluator.global_env["main"]
-                result_str = pretty_print_value(result)
                 
-                if output:
-                    with open(output, 'w') as f:
-                        f.write(result_str + '\n')
-                    print(f"Result written to {output}: {result_str}")
+                # Check if main is an IO action
+                from ai_lang.core import VIOAction, VIO
+                main_type = checker.global_types.get("main")
+                if isinstance(main_type, VIO) and isinstance(result, VIOAction):
+                    # Execute the IO action
+                    try:
+                        final_result = evaluator.run_main_io(result)
+                        if output:
+                            with open(output, 'w') as f:
+                                f.write(pretty_print_value(final_result) + '\n')
+                    except Exception as e:
+                        print(f"IO error: {e}", file=sys.stderr)
+                        sys.exit(1)
                 else:
-                    print(f"Result: {result_str}")
+                    # Regular value
+                    result_str = pretty_print_value(result)
+                    if output:
+                        with open(output, 'w') as f:
+                            f.write(result_str + '\n')
+                        print(f"Result written to {output}: {result_str}")
+                    else:
+                        print(f"Result: {result_str}")
             else:
                 from ai_lang.colors import Colors
                 print(Colors.success(f"Loaded {len(module.declarations)} definitions"))

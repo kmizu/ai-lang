@@ -124,6 +124,32 @@ ai-lang/
    - Data type names correctly convert to constructors in expression contexts
    - Added VPi quotation support for function types
 
+## Side-Effect Handling ✅ IMPLEMENTED
+
+A comprehensive IO monad system has been implemented for handling side effects:
+
+### IO Monad System
+- **Type-safe IO**: All side effects tracked in the type system via `IO` type
+- **Monadic operations**: `pure` and `bind` for composing IO actions
+- **Built-in IO primitives**:
+  - `print`, `putStr`, `putStrLn` for output
+  - `getLine` for input
+  - Future support for file I/O operations
+- **Dependent IO types**: IO types can depend on values (e.g., `readLines : (n : Nat) -> IO (Vec n String)`)
+- **Effect tracking**: IO actions produce a list of effects for testing/debugging
+- **Automatic execution**: Programs with `main : IO Unit` are automatically executed
+
+### Example Usage:
+```ai-lang
+-- Hello World
+main : IO Unit
+main = putStrLn "Hello, World!"
+
+-- Interactive program
+main : IO Unit
+main = bind {String} {Unit} getLine putStrLn
+```
+
 ## All TODO Items Completed ✅
 
 All planned features and improvements have been successfully implemented:
@@ -153,6 +179,12 @@ All planned features and improvements have been successfully implemented:
 6. **Enhanced Error Messages** ✅
    - Source locations, visual context, and smart suggestions
    - Type derivation traces in verbose mode
+
+7. **Side-Effect Handling** ✅
+   - IO monad system for type-safe side effects
+   - Built-in IO primitives for input/output
+   - Monadic composition with pure and bind
+   - Automatic execution of IO main functions
 
 ### Medium Priority
 

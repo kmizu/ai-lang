@@ -1,0 +1,11 @@
+-- Interactive greeting program
+
+-- Main program that asks for name and greets
+main : IO Unit
+main = bind {Unit} {Unit}
+  (putStrLn "What is your name?")
+  (\_ -> bind {String} {Unit}
+    getLine
+    (\name -> putStrLn ("Hello, " ++ name ++ "!")))
+
+-- Note: ++ is string concatenation (would need to be implemented)

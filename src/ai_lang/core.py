@@ -7,7 +7,7 @@ and computation during type checking.
 
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import List, Dict, Optional, Union, Any, Tuple
+from typing import List, Dict, Optional, Union, Any, Tuple, Callable
 from abc import ABC, abstractmethod
 from enum import Enum, auto
 
@@ -191,6 +191,41 @@ class VTypeClassMethod(Value):
         return TGlobal(self.method_name)
 
 
+@dataclass(frozen=True)
+class VIO(Value):
+    """IO type constructor value."""
+    result_type: Value
+    
+    def quote(self, level: int = 0) -> Term:
+        return TApp(TGlobal("IO"), self.result_type.quote(level))
+
+
+@dataclass(frozen=True)
+class VUnit(Value):
+    """Unit type value."""
+    
+    def quote(self, level: int = 0) -> Term:
+        return TGlobal("Unit")
+
+
+@dataclass(frozen=True) 
+class VUnitValue(Value):
+    """Unit value (the single inhabitant of Unit type)."""
+    
+    def quote(self, level: int = 0) -> Term:
+        return TConstructor("unit", [])
+
+
+@dataclass(frozen=True)
+class VIOAction(Value):
+    """IO action value (runtime representation)."""
+    action: 'IOAction'
+    
+    def quote(self, level: int = 0) -> Term:
+        # IO actions cannot be quoted back to terms
+        raise ValueError("Cannot quote IO action")
+
+
 # Neutral terms (cannot be reduced further)
 class Neutral(ABC):
     """Base class for neutral terms."""
@@ -340,6 +375,16 @@ class TGlobal(Term):
 
 
 @dataclass(frozen=True)
+class TIO(Term):
+    """IO type constructor term."""
+    result_type: Term
+    
+    def eval(self, env: Environment) -> Value:
+        result_type_val = self.result_type.eval(env)
+        return VIO(result_type_val)
+
+
+@dataclass(frozen=True)
 class TConstraint(Term):
     """Type class constraint term."""
     class_name: str
@@ -434,6 +479,9 @@ def apply(function: Value, argument: Value) -> Value:
         # Type class method - we need the evaluator to resolve this
         # For now, return a neutral application
         return VNeutral(NApp(NGlobal(function.method_name), argument))
+    elif isinstance(function, VIOAction):
+        # IO actions cannot be directly applied - they need special handling
+        raise TypeError("Cannot directly apply IO action - use bind instead")
     else:
         raise TypeError(f"Cannot apply {type(function)} to argument")
 
@@ -450,4 +498,77 @@ BUILTIN_TYPES = {
     "Nat": lambda: VType(Level(0)),  # Nat : Type
     "Bool": lambda: VType(Level(0)), # Bool : Type  
     "String": lambda: VType(Level(0)), # String : Type
+    "Unit": lambda: VUnit(), # Unit : Type
 }
+
+
+# IO Action classes for runtime execution
+class IOAction(ABC):
+    """Abstract base class for IO actions."""
+    
+    @abstractmethod
+    def execute(self, input_handler: Optional[Callable[[], str]] = None) -> Tuple[Value, List['IOEffect']]:
+        """Execute the IO action, returning a value and list of effects."""
+        pass
+
+
+@dataclass
+class IOPure(IOAction):
+    """Pure value wrapped in IO."""
+    value: Value
+    
+    def execute(self, input_handler: Optional[Callable[[], str]] = None) -> Tuple[Value, List['IOEffect']]:
+        return (self.value, [])
+
+
+@dataclass
+class IOBind(IOAction):
+    """Monadic bind operation."""
+    first: IOAction
+    cont: Callable[[Value], IOAction]
+    
+    def execute(self, input_handler: Optional[Callable[[], str]] = None) -> Tuple[Value, List['IOEffect']]:
+        val1, effects1 = self.first.execute(input_handler)
+        action2 = self.cont(val1)
+        val2, effects2 = action2.execute(input_handler)
+        return (val2, effects1 + effects2)
+
+
+@dataclass
+class IOPrint(IOAction):
+    """Print a string to stdout."""
+    message: str
+    
+    def execute(self, input_handler: Optional[Callable[[], str]] = None) -> Tuple[Value, List['IOEffect']]:
+        return (VConstructor("unit", []), [PrintEffect(self.message)])
+
+
+@dataclass  
+class IOGetLine(IOAction):
+    """Read a line from stdin."""
+    
+    def execute(self, input_handler: Optional[Callable[[], str]] = None) -> Tuple[Value, List['IOEffect']]:
+        if input_handler:
+            line = input_handler()
+        else:
+            line = input()
+        return (VString(line), [ReadEffect(line)])
+
+
+# IO Effects for tracking
+@dataclass
+class IOEffect:
+    """Base class for IO effects."""
+    pass
+
+
+@dataclass
+class PrintEffect(IOEffect):
+    """Effect of printing to stdout."""
+    message: str
+
+
+@dataclass
+class ReadEffect(IOEffect):
+    """Effect of reading from stdin."""
+    result: str

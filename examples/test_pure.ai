@@ -1,0 +1,5 @@
+-- Test pure function
+
+-- Lift a simple value  
+x : IO String
+x = pure {String} "Hello"
