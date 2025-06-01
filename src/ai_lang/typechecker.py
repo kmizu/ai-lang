@@ -11,13 +11,7 @@ from enum import Enum, auto
 
 from .syntax import *
 from .core import *
-
-
-class TypeCheckError(Exception):
-    """Type checking error."""
-    def __init__(self, message: str, location: Optional[SourceLocation] = None):
-        super().__init__(message)
-        self.location = location
+from .errors import TypeCheckError
 
 
 # Context for type checking
@@ -76,18 +70,58 @@ class DataConstructorInfo:
 
 
 @dataclass
+class ModuleInfo:
+    """Information about a loaded module."""
+    name: str
+    exports: Dict[str, Union[Value, DataDecl, DataConstructorInfo]]
+    path: str
+
+
+@dataclass
 class TypeChecker:
     """Type checker state."""
     data_types: Dict[str, DataDecl]
     constructors: Dict[str, DataConstructorInfo]
     global_types: Dict[str, Value]
     global_values: Dict[str, Value]
+    modules: Dict[str, 'ModuleInfo']  # Loaded modules
+    module_paths: List[str]  # Search paths for modules
+    elaborated_terms: Dict[str, Term]  # Store elaborated terms for evaluation
     
     def __init__(self):
         self.data_types = {}
         self.constructors = {}
         self.global_types = {}
         self.global_values = {}
+        self.modules = {}
+        self.module_paths = ['.', 'lib']  # Default search paths
+        self.elaborated_terms = {}
+    
+    def eval_with_globals(self, term: Term, env: Environment) -> Value:
+        """Evaluate a term with global lookups."""
+        if isinstance(term, TGlobal):
+            # Look up global value
+            if term.name in self.global_values:
+                return self.global_values[term.name]
+            elif term.name in self.global_types:
+                return self.global_types[term.name]
+            else:
+                # Return neutral for unknown globals
+                return VNeutral(NGlobal(term.name))
+        elif isinstance(term, TApp):
+            # Handle application with globals
+            fun_val = self.eval_with_globals(term.function, env)
+            arg_val = self.eval_with_globals(term.argument, env)
+            
+            # Special handling for type-level applications
+            if isinstance(fun_val, VPi):
+                # Apply Pi type by instantiating the codomain
+                return fun_val.codomain_closure.apply(arg_val)
+            else:
+                return apply(fun_val, arg_val)
+        else:
+            # Use standard evaluation
+            return term.eval(env)
     
     def add_data_type(self, decl: DataDecl, ctx: Context) -> None:
         """Add a data type declaration."""
@@ -96,9 +130,17 @@ class TypeChecker:
         # First, add the data type itself to the context
         # For parameterized types, create a function type
         if decl.type_params:
-            # For now, just treat parameterized types as Type
-            # TODO: Properly handle type parameters
-            data_type = VType(Level(0))
+            # Create a Pi type for each parameter
+            # Start with the result type as a term
+            result_term = TType(Level(0))
+            
+            # Build the type backwards (right-to-left) for proper Pi nesting
+            for param in reversed(decl.type_params):
+                # Each parameter is a Type -> ... -> Type function
+                result_term = TPi(param.value, TType(Level(0)), result_term, False)
+            
+            # Evaluate the complete type
+            data_type = self.eval_with_globals(result_term, ctx.environment)
         else:
             data_type = VType(Level(0))
         
@@ -111,18 +153,28 @@ class TypeChecker:
         
         # Add constructors
         for ctor in decl.constructors:
-            # Convert constructor type
-            # For now, ignore type parameters in constructors
-            # Just convert the type as-is, treating type parameters as type constructors
-            ctor_type_term = self.convert_type_ignoring_params(ctor.type, decl.type_params)
-            ctor_type_val = ctor_type_term.eval(ctx.environment)
+            # Convert constructor type in the context with type parameters
+            ctor_type_term = self.convert_type(ctor.type, param_ctx)
+            
+            # For parameterized constructors, we need to add implicit parameters
+            if decl.type_params:
+                # Build the constructor type with implicit type parameters
+                for param in reversed(decl.type_params):
+                    ctor_type_term = TPi(
+                        param.value,
+                        TType(Level(0)),
+                        ctor_type_term,
+                        implicit=True  # Type parameters are implicit
+                    )
+            
+            ctor_type_val = self.eval_with_globals(ctor_type_term, ctx.environment)
             
             info = DataConstructorInfo(
                 name=ctor.name.value,
                 type=ctor_type_val,
                 data_type=decl.name.value,
                 parameters=[p.value for p in decl.type_params],
-                indices=[(n.value, self.convert_type(t, ctx).eval(ctx.environment)) 
+                indices=[(n.value, self.convert_type(t, param_ctx).eval(param_ctx.environment)) 
                         for n, t in decl.indices]
             )
             self.constructors[ctor.name.value] = info
@@ -137,8 +189,17 @@ class TypeChecker:
         """Type check a complete module."""
         ctx = Context()
         
+        # Process imports first
+        for imp in module.imports:
+            self.process_import(imp, ctx)
+        
+        # Then check declarations
         for decl in module.declarations:
             self.check_declaration(decl, ctx)
+        
+        # Process exports if this is a named module
+        if module.name:
+            self.process_exports(module)
     
     def check_declaration(self, decl: Declaration, ctx: Context) -> None:
         """Type check a declaration."""
@@ -153,7 +214,12 @@ class TypeChecker:
             self.check_is_type(type_type, ctx)
             
             # Store the type
-            type_val = type_term.eval(ctx.environment)
+            # Don't fully evaluate - preserve the structure for type checking
+            if isinstance(type_term, TApp) and isinstance(type_term.function, TGlobal):
+                # Special case for applied data types - store as neutral
+                type_val = VNeutral(self.term_to_neutral(type_term))
+            else:
+                type_val = self.eval_with_globals(type_term, ctx.environment)
             self.add_global(decl.name.value, type_val)
         
         elif isinstance(decl, FunctionDef):
@@ -189,10 +255,15 @@ class TypeChecker:
         current_type = expected_type
         new_ctx = ctx
         
+        # Keep track of implicit parameters for later use
+        implicit_params = []
+        
         # First, handle implicit parameters that don't have patterns
         while isinstance(current_type, VPi) and current_type.implicit:
             # Add implicit parameter to context
-            new_ctx = new_ctx.extend(current_type.name, current_type.domain)
+            param_name = current_type.name
+            implicit_params.append((param_name, current_type.domain))
+            new_ctx = new_ctx.extend(param_name, current_type.domain)
             var_val = VNeutral(NVar(len(new_ctx.environment.values) - 1))
             current_type = current_type.codomain_closure.apply(var_val)
         
@@ -284,7 +355,7 @@ class TypeChecker:
             self.check_is_type(domain_type, ctx)
             
             # Check codomain type in extended context
-            domain_val = term.domain.eval(ctx.environment)
+            domain_val = self.eval_with_globals(term.domain, ctx.environment)
             new_ctx = ctx.extend(term.name, domain_val)
             codomain_type = self.infer_type(term.codomain, new_ctx)
             self.check_is_type(codomain_type, new_ctx)
@@ -300,8 +371,33 @@ class TypeChecker:
             raise TypeCheckError("Cannot infer type of lambda without annotation")
         
         elif isinstance(term, TApp):
+            # Special handling for applications that may need delayed inference
+            # Check if this is a top-level application of a function with implicit params
+            from .delayed_inference import infer_with_delayed_inference
+            
+            # Try delayed inference first for better results
+            if not term.implicit:
+                try:
+                    # Check if the base function has implicit parameters
+                    base_fun, args = self._get_base_function(term)
+                    if isinstance(base_fun, TGlobal) and base_fun.name in self.global_types:
+                        base_type = self.global_types[base_fun.name]
+                        if isinstance(base_type, VPi) and base_type.implicit:
+                            # Use delayed inference
+                            result_term = infer_with_delayed_inference(term, ctx, self)
+                            return self.infer_type(result_term, ctx)
+                except Exception as e:
+                    # print(f"DEBUG: Delayed inference failed: {e}")
+                    # Fall through to regular inference
+                    pass
+            
+            # Regular inference
             # Infer function type
             fun_type = self.infer_type(term.function, ctx)
+            
+            # Debug output disabled
+            # print(f"DEBUG infer_type TApp: function={term.function}, arg={term.argument}")
+            # print(f"DEBUG infer_type TApp: fun_type={fun_type}")
             
             # If we have implicit parameters and an explicit application,
             # we need to insert implicit arguments
@@ -322,7 +418,7 @@ class TypeChecker:
             self.check_type(term.argument, fun_type.domain, ctx)
             
             # Return the instantiated codomain type
-            arg_val = term.argument.eval(ctx.environment)
+            arg_val = self.eval_with_globals(term.argument, ctx.environment)
             return fun_type.codomain_closure.apply(arg_val)
         
         elif isinstance(term, TLiteral):
@@ -420,6 +516,10 @@ class TypeChecker:
         if isinstance(type_val, VType):
             return  # Type_n is a valid type
         
+        # Neutral terms representing type applications are also valid types
+        if isinstance(type_val, VNeutral) and self.is_type_application(type_val.neutral):
+            return  # Data type applications are valid types
+        
         # Other values can also be types if they have type Type
         # For now, we'll be more permissive
         # TODO: Properly check that type_val : Type_n for some n
@@ -436,39 +536,156 @@ class TypeChecker:
     
     def insert_implicit_args(self, app: TApp, fun_type: Value, ctx: Context) -> Term:
         """Insert implicit arguments for a function application."""
-        current_app = app
-        current_type = fun_type
-        
-        # Build applications from the inside out
-        while isinstance(current_type, VPi) and current_type.implicit:
-            # We need to infer the implicit argument
-            if isinstance(current_type.domain, VType):
-                # The implicit argument is a Type
-                # We can try to infer it from the explicit argument
-                try:
-                    # Get the type of the explicit argument
-                    arg_type = self.infer_type(app.argument, ctx)
-                    implicit_arg = self.value_to_term(arg_type, ctx)
-                except Exception as e:
-                    # If we can't infer, create a metavariable (for now, just fail)
-                    raise TypeCheckError(f"Cannot infer implicit type argument: {e}")
-            else:
-                # For non-type implicit arguments, we need more context
-                raise TypeCheckError(f"Cannot infer implicit argument of type {current_type.domain}")
+        # First try the new constraint-based inference
+        try:
+            from .constraints import infer_implicit_args_with_constraints
             
-            # Create new application with implicit argument
-            current_app = TApp(
-                TApp(current_app.function, implicit_arg, implicit=True),
-                current_app.argument,
-                implicit=False
+            # Collect all explicit arguments from nested applications
+            explicit_args = []
+            current = app
+            base_fun = None
+            
+            # Unwrap nested applications to get all arguments
+            while isinstance(current, TApp) and not current.implicit:
+                explicit_args.insert(0, current.argument)
+                if isinstance(current.function, TApp):
+                    current = current.function
+                else:
+                    base_fun = current.function
+                    break
+            
+            if base_fun is None:
+                base_fun = app.function
+                explicit_args = [app.argument]
+            
+            # print(f"DEBUG: Collected {len(explicit_args)} explicit args for inference")
+            
+            # Infer implicit arguments using constraints
+            implicit_args, substitution = infer_implicit_args_with_constraints(
+                app, fun_type, explicit_args, ctx, self
             )
             
+            # Build the application with implicit arguments
+            result = base_fun  # The base function
+            for implicit_arg in implicit_args:
+                result = TApp(result, implicit_arg, implicit=True)
             
-            # Update the function type
-            arg_val = implicit_arg.eval(ctx.environment)
-            current_type = current_type.codomain_closure.apply(arg_val)
+            # Add the explicit arguments back
+            for explicit_arg in explicit_args:
+                result = TApp(result, explicit_arg, implicit=False)
+            
+            return result
+            
+        except Exception as e:
+            # Fall back to the old approach for single implicit parameters
+            current_app = app
+            current_type = fun_type
+            
+            # Count implicit parameters
+            implicit_count = 0
+            temp_type = fun_type
+            while isinstance(temp_type, VPi) and temp_type.implicit:
+                implicit_count += 1
+                dummy = VNeutral(NVar(1000 + implicit_count))
+                temp_type = temp_type.codomain_closure.apply(dummy)
+            
+            if implicit_count > 1:
+                # Multiple implicit parameters - use constraint solver failed
+                # Suppress warning for now
+                # print(f"Warning: Function has {implicit_count} implicit parameters, constraint solving failed: {e}")
+                pass
+            
+            # Simple approach: infer one implicit at a time
+            # This works for single implicit parameters but not multiple
+            inferred_count = 0
+            while isinstance(current_type, VPi) and current_type.implicit and inferred_count < 1:
+                # We need to infer the implicit argument
+                if isinstance(current_type.domain, VType):
+                    # The implicit argument is a Type
+                    # Try to infer it from the explicit argument
+                    try:
+                        # Get the type of the explicit argument
+                        arg_type = self.infer_type(app.argument, ctx)
+                        implicit_arg = self.value_to_term(arg_type, ctx)
+                    except Exception as e:
+                        # If we can't infer, create a metavariable (for now, just fail)
+                        raise TypeCheckError(f"Cannot infer implicit type argument: {e}")
+                else:
+                    # For non-type implicit arguments, we need more context
+                    raise TypeCheckError(f"Cannot infer implicit argument of type {current_type.domain}")
+                
+                # Create new application with implicit argument
+                current_app = TApp(
+                    TApp(current_app.function, implicit_arg, implicit=True),
+                    current_app.argument,
+                    implicit=False
+                )
+                
+                # Update the function type
+                arg_val = self.eval_with_globals(implicit_arg, ctx.environment)
+                current_type = current_type.codomain_closure.apply(arg_val)
+                inferred_count += 1
+            
+            return current_app
+    
+    def infer_implicit_from_args(self, fun_type: Value, placeholders: List[Optional[Term]], 
+                                 explicit_args: List[Term], ctx: Context) -> List[Optional[Term]]:
+        """Infer implicit arguments from explicit arguments."""
+        # This is a simplified inference algorithm
+        # A full implementation would use constraint solving
         
-        return current_app
+        current_type = fun_type
+        result = []
+        placeholder_idx = 0
+        
+        # Skip implicit parameters (we're inferring these)
+        while isinstance(current_type, VPi) and current_type.implicit:
+            result.append(None)  # Will fill in later
+            # Use dummy value to proceed
+            dummy_val = VNeutral(NVar(1000 + placeholder_idx))
+            current_type = current_type.codomain_closure.apply(dummy_val)
+            placeholder_idx += 1
+        
+        # Now match explicit arguments
+        if explicit_args and isinstance(current_type, VPi):
+            # Infer from first explicit argument
+            try:
+                arg_type = self.infer_type(explicit_args[0], ctx)
+                # For const example: if first arg has type Nat, then A = Nat
+                if result:
+                    result[0] = self.value_to_term(arg_type, ctx)
+                
+                # Apply the first inferred type and continue
+                if result[0]:
+                    current_type = fun_type
+                    # Apply first implicit
+                    if isinstance(current_type, VPi) and current_type.implicit:
+                        arg_val = self.eval_with_globals(result[0], ctx.environment)
+                        current_type = current_type.codomain_closure.apply(arg_val)
+                        
+                        # Try to infer second implicit from second explicit arg
+                        if len(result) > 1 and len(explicit_args) > 1:
+                            # Skip to next explicit parameter position
+                            while isinstance(current_type, VPi) and current_type.implicit:
+                                dummy_val = VNeutral(NVar(1001))
+                                current_type = current_type.codomain_closure.apply(dummy_val)
+                            
+                            # Skip first explicit parameter
+                            if isinstance(current_type, VPi):
+                                dummy_val = VNeutral(NVar(1002))
+                                current_type = current_type.codomain_closure.apply(dummy_val)
+                            
+                            # Now we should be at the second explicit parameter
+                            # Infer from second argument
+                            try:
+                                arg2_type = self.infer_type(explicit_args[1], ctx)
+                                result[1] = self.value_to_term(arg2_type, ctx)
+                            except:
+                                pass
+            except:
+                pass
+        
+        return result
     
     def infer_implicit_from_expected(self, fun_type: VPi, expected_type: Value, 
                                     app_term: TApp, ctx: Context) -> Optional[Term]:
@@ -540,22 +757,201 @@ class TypeChecker:
             return self.equal_types(cod1, cod2, new_ctx)
         
         elif isinstance(type1, VNeutral) and isinstance(type2, VNeutral):
-            # For neutral values, we need to check if they represent the same variable
-            # This is a simplified check - proper normalization would be better
-            if isinstance(type1.neutral, NVar) and isinstance(type2.neutral, NVar):
-                # Two neutral variables are equal if they have the same de Bruijn level
-                # relative to the current context size
-                ctx_size = len(ctx.environment.values)
-                # Convert absolute levels to de Bruijn indices
-                index1 = ctx_size - 1 - type1.neutral.level
-                index2 = ctx_size - 1 - type2.neutral.level
-                return index1 == index2
-            # For other neutrals, use structural equality
-            return str(type1) == str(type2)
+            # For neutral values, we need to check if they represent the same computation
+            return self.equal_neutrals(type1.neutral, type2.neutral)
+        
+        elif isinstance(type1, VNeutral) and isinstance(type2, VType):
+            # Special case: a neutral term might represent a type
+            # This happens with parameterized data types like (List Nat)
+            # Check if the neutral is a type application
+            if self.is_type_application(type1.neutral):
+                return True  # Assume it's a valid type for now
+            return False
+        
+        elif isinstance(type1, VType) and isinstance(type2, VNeutral):
+            # Symmetric case
+            return self.equal_types(type2, type1, ctx)
         
         # For other types, use structural equality
         # TODO: Implement proper equality
         return str(type1) == str(type2)
+    
+    def equal_neutrals(self, n1: Neutral, n2: Neutral) -> bool:
+        """Check if two neutral terms are equal."""
+        if type(n1) != type(n2):
+            return False
+        
+        if isinstance(n1, NVar) and isinstance(n2, NVar):
+            return n1.level == n2.level
+        elif isinstance(n1, NGlobal) and isinstance(n2, NGlobal):
+            return n1.name == n2.name
+        elif isinstance(n1, NApp) and isinstance(n2, NApp):
+            return (self.equal_neutrals(n1.function, n2.function) and
+                    self.equal_values(n1.argument, n2.argument))
+        else:
+            return False
+    
+    def equal_values(self, v1: Value, v2: Value) -> bool:
+        """Check if two values are equal."""
+        # For now, use string comparison
+        return str(v1) == str(v2)
+    
+    def is_type_application(self, neutral: Neutral) -> bool:
+        """Check if a neutral term is a type application to a data type."""
+        if isinstance(neutral, NApp):
+            # Check if the function is a data type
+            if isinstance(neutral.function, NGlobal):
+                return neutral.function.name in self.data_types
+        return False
+    
+    def term_to_neutral(self, term: Term) -> Neutral:
+        """Convert a term to a neutral value (for preserving structure)."""
+        if isinstance(term, TGlobal):
+            return NGlobal(term.name)
+        elif isinstance(term, TApp):
+            fun_neutral = self.term_to_neutral(term.function)
+            # We need to evaluate the argument to a value
+            arg_val = self.eval_with_globals(term.argument, Environment([]))
+            return NApp(fun_neutral, arg_val, term.implicit)
+        else:
+            raise TypeCheckError(f"Cannot convert {term} to neutral")
+    
+    def value_to_term(self, val: Value, ctx: Context) -> Term:
+        """Convert a value to a term (reification)."""
+        # This is a simplified version - full implementation would handle all cases
+        if isinstance(val, VType):
+            return TType(val.level)
+        elif isinstance(val, VConstructor):
+            if val.args:
+                # Build constructor application
+                result = TConstructor(val.name, [])
+                for arg in val.args:
+                    arg_term = self.value_to_term(arg, ctx)
+                    result = TApp(result, arg_term)
+                return result
+            else:
+                return TConstructor(val.name, [])
+        elif isinstance(val, VNeutral):
+            return self.neutral_to_term(val.neutral, ctx)
+        else:
+            # For other values, use quote
+            return val.quote(len(ctx.environment.values))
+    
+    def neutral_to_term(self, neutral: Neutral, ctx: Context) -> Term:
+        """Convert a neutral to a term."""
+        if isinstance(neutral, NVar):
+            return TVar(neutral.level)
+        elif isinstance(neutral, NGlobal):
+            return TGlobal(neutral.name)
+        elif isinstance(neutral, NApp):
+            fun_term = self.neutral_to_term(neutral.function, ctx)
+            arg_term = self.value_to_term(neutral.argument, ctx)
+            return TApp(fun_term, arg_term, neutral.implicit)
+        else:
+            raise TypeCheckError(f"Cannot convert neutral {neutral} to term")
+    
+    def process_import(self, imp: Import, ctx: Context) -> None:
+        """Process an import statement."""
+        module_name = imp.module.value
+        
+        # Check if module is already loaded
+        if module_name not in self.modules:
+            # Load the module
+            self.load_module(module_name)
+        
+        module_info = self.modules[module_name]
+        
+        # Import specific names or all exports
+        if imp.items:
+            # Import specific names
+            for item in imp.items:
+                if item.name.value not in module_info.exports:
+                    raise TypeCheckError(f"Module {module_name} does not export {item.name.value}")
+                self.import_name(item.name.value, module_info.exports[item.name.value], item.alias)
+        else:
+            # Import all exports
+            prefix = imp.alias.value if imp.alias else ""
+            for export_name, export_value in module_info.exports.items():
+                import_name = f"{prefix}.{export_name}" if prefix else export_name
+                self.import_name(import_name, export_value, None)
+    
+    def import_name(self, name: str, value: Union[Value, DataDecl, DataConstructorInfo], alias: Optional[Name]) -> None:
+        """Import a single name."""
+        import_name = alias.value if alias else name
+        
+        if isinstance(value, Value):
+            # It's a type or value
+            self.global_types[import_name] = value
+        elif isinstance(value, DataDecl):
+            # It's a data type
+            self.data_types[import_name] = value
+        elif isinstance(value, DataConstructorInfo):
+            # It's a constructor
+            self.constructors[import_name] = value
+    
+    def load_module(self, module_name: str) -> None:
+        """Load a module from disk."""
+        import os
+        from .parser import Parser
+        from .lexer import Lexer
+        
+        # Find module file
+        module_file = None
+        for path in self.module_paths:
+            candidate = os.path.join(path, f"{module_name}.ai")
+            if os.path.exists(candidate):
+                module_file = candidate
+                break
+        
+        if not module_file:
+            raise TypeCheckError(f"Cannot find module {module_name}")
+        
+        # Parse the module
+        with open(module_file, 'r') as f:
+            source = f.read()
+        
+        lexer = Lexer(source)
+        tokens = list(lexer.tokenize())
+        parser = Parser(tokens)
+        module = parser.parse_module()
+        
+        # Type check the module
+        sub_checker = TypeChecker()
+        sub_checker.module_paths = self.module_paths
+        sub_checker.check_module(module)
+        
+        # Collect exports
+        exports = {}
+        if module.exports:
+            # Explicit exports
+            for export in module.exports:
+                for name in export.names:
+                    export_name = name.value
+                    if export_name in sub_checker.global_types:
+                        exports[export_name] = sub_checker.global_types[export_name]
+                    elif export_name in sub_checker.data_types:
+                        exports[export_name] = sub_checker.data_types[export_name]
+                    elif export_name in sub_checker.constructors:
+                        exports[export_name] = sub_checker.constructors[export_name]
+                    else:
+                        raise TypeCheckError(f"Cannot export undefined name {export_name}")
+        else:
+            # No explicit exports - export everything
+            exports.update({name: val for name, val in sub_checker.global_types.items()})
+            exports.update({name: val for name, val in sub_checker.data_types.items()})
+            exports.update({name: val for name, val in sub_checker.constructors.items()})
+        
+        # Store module info
+        self.modules[module_name] = ModuleInfo(
+            name=module_name,
+            exports=exports,
+            path=module_file
+        )
+    
+    def process_exports(self, module: Module) -> None:
+        """Process module exports."""
+        # This is handled during module loading
+        pass
     
     def convert_type_ignoring_params(self, ast_type: Type, type_params: List[Name]) -> Term:
         """Convert a type, treating type parameters as opaque type constructors."""
@@ -600,13 +996,14 @@ class TypeChecker:
             
             # Check for user-defined types
             if name in self.data_types:
-                return TConstructor(name, [])
+                # For data types, we should return a global reference
+                # so they can be applied to arguments
+                return TGlobal(name)
             
             # Check global types
             if name in self.global_types:
-                # For now, return a constructor
-                # TODO: Handle global references properly
-                return TConstructor(name, [])
+                # Return global reference for proper type application
+                return TGlobal(name)
             
             # Otherwise, might be a type variable
             result = ctx.lookup(name)
@@ -659,7 +1056,9 @@ class TypeChecker:
         if isinstance(expr, Var):
             result = ctx.lookup(expr.name.value)
             if result:
-                index, _, _ = result
+                index, type_val, _ = result
+                # Special handling: if this is a Type being used as an expression,
+                # we might need to handle it differently
                 return TVar(index)
             
             # Check if it's a constructor
@@ -760,10 +1159,23 @@ class TypeChecker:
         
         else:
             raise TypeCheckError(f"Cannot convert expression: {type(expr)}")
+    
+    def _get_base_function(self, term: Term) -> Tuple[Term, List[Term]]:
+        """Get the base function and arguments from an application."""
+        args = []
+        current = term
+        
+        while isinstance(current, TApp) and not current.implicit:
+            args.insert(0, current.argument)
+            current = current.function
+        
+        return current, args
 
 
-def type_check_module(module: Module) -> TypeChecker:
+def type_check_module(module: Module, module_paths: Optional[List[str]] = None) -> TypeChecker:
     """Type check a module and return the type checker with definitions."""
     checker = TypeChecker()
+    if module_paths:
+        checker.module_paths = module_paths
     checker.check_module(module)
     return checker

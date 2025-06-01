@@ -92,7 +92,15 @@ def main(filename: Optional[str] = None,
                 print("Type checking...")
             type_check_start = time.time() if timing else 0
             
-            checker = type_check_module(module)
+            # Set up module paths
+            import os
+            module_dir = os.path.dirname(os.path.abspath(filename)) if filename else '.'
+            lib_dir = os.path.join(module_dir, 'lib')
+            module_paths = [module_dir]
+            if os.path.exists(lib_dir):
+                module_paths.append(lib_dir)
+            
+            checker = type_check_module(module, module_paths)
             
             if timing:
                 type_check_time = time.time() - type_check_start

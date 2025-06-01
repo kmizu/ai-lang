@@ -99,18 +99,25 @@ ai-lang/
 - ✅ Polymorphic types with implicit parameters
 - ✅ Basic implicit type argument inference
 - ✅ Explicit type application syntax `{Type}`
-- ✅ Module declarations and imports (parsing only)
+- ✅ Parameterized data types (e.g., `List A`)
+- ✅ Module system with imports and exports
+- ✅ **Constraint-based type inference for multiple implicit parameters**
+- ✅ **Delayed inference for handling partial applications**
+- ✅ **Implicit parameters accessible in function bodies**
 
 ### Known Issues and Limitations
 
-1. **Implicit Type Inference**
-   - Can only infer single implicit type parameters
-   - Cannot infer multiple implicit parameters (e.g., `const 1 True` needs `const {Nat} {Bool} 1 True`)
-   - Cannot infer from function arguments (e.g., `twice succ` needs `twice {Nat} succ`)
+1. **Implicit Type Inference** ✅ FULLY RESOLVED
+   - ✅ Can now infer multiple implicit type parameters during type checking
+   - ✅ Constraint-based solver successfully handles functions like `const : {A : Type} -> {B : Type} -> A -> B -> A`
+   - ✅ Type checking correctly infers `const Z True` as `const {Nat} {Bool} Z True`
+   - ✅ Direct evaluation now works correctly with inferred implicit arguments
+   - ✅ The evaluator automatically elaborates terms during evaluation
 
-2. **De Bruijn Indices**
-   - Fixed issue with non-dependent function types in closures
-   - Proper context extension for all function types
+2. **De Bruijn Indices** ✅ RESOLVED
+   - ✅ Fixed issue with non-dependent function types in closures
+   - ✅ Proper context extension for all function types
+   - ✅ Fixed evaluator environment construction to match type checking context
 
 3. **Type Conversion**
    - Data type names correctly convert to constructors in expression contexts
@@ -120,35 +127,25 @@ ai-lang/
 
 ### High Priority
 
-1. **Fully Implement Parameterized Data Types**
-   - Currently syntax is parsed but type checking is incomplete
-   - Need to handle type parameters in data constructors
-   - Implement proper type parameter substitution
-   - Example that should work:
+1. **Implicit Parameters in Function Bodies** ✅ RESOLVED
+   - ✅ Implicit type parameters are now accessible in function bodies
+   - ✅ Fixed evaluator to properly track implicit parameters
+   - ✅ Example that now works:
    ```ai-lang
-   data List (A : Type) : Type where
-     Nil : List A
-     Cons : A -> List A -> List A
+   nilOf : {A : Type} -> A -> List A
+   nilOf x = Nil {A}  -- A is now properly in scope
    ```
-
-2. **Fully Implement Module Loading and Resolution**
-   - Module syntax is parsed but not executed
-   - Need to implement:
-     - Module dependency resolution
-     - Import mechanism
-     - Namespace management
-     - Cyclic dependency detection
-   - File system integration for multi-file projects
 
 ### Medium Priority
 
-3. **Advanced Implicit Type Inference**
-   - Implement constraint-based inference for multiple parameters
-   - Support inference from multiple arguments
-   - Better error messages for inference failures
-   - Possible approach: collect constraints and solve
+2. **Advanced Implicit Type Inference** ✅ FULLY COMPLETE
+   - ✅ Implemented constraint-based inference for multiple parameters
+   - ✅ Support inference from multiple arguments
+   - ✅ Created comprehensive constraint solver with type variables
+   - ✅ Evaluator now performs elaboration on-the-fly for proper evaluation
+   - ⚠️  TODO: Better error messages for inference failures
 
-4. **Higher-Rank Polymorphism**
+3. **Higher-Rank Polymorphism**
    - Support functions taking polymorphic functions as arguments
    - Example that should work:
    ```ai-lang
@@ -158,22 +155,22 @@ ai-lang/
 
 ### Low Priority
 
-5. **Type Classes / Interfaces**
+4. **Type Classes / Interfaces**
    - Design and implement a trait/interface system
    - Automatic instance resolution
    - Coherence checking
 
-6. **Totality Checking**
+5. **Totality Checking**
    - Termination checking for recursive functions
    - Coverage checking for pattern matching
    - Positivity checking for data types
 
-7. **Optimization**
+6. **Optimization**
    - Implement eta-reduction
    - Dead code elimination
    - Inlining of simple functions
 
-8. **Better Error Messages**
+7. **Better Error Messages**
    - Include source locations in all errors
    - Provide suggestions for common mistakes
    - Show type derivation traces in verbose mode

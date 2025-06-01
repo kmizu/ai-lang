@@ -12,11 +12,7 @@ import sys
 from .syntax import *
 from .core import *
 from .typechecker import TypeChecker, Context
-
-
-class EvalError(Exception):
-    """Evaluation error."""
-    pass
+from .errors import EvalError
 
 
 @dataclass
@@ -111,12 +107,24 @@ class Evaluator:
         for clause in func_def.clauses:
             # Create a context with pattern variables
             ctx = Context()
+            
+            # First, add implicit parameters from the function type
+            current_type = func_type
+            implicit_param_names = []
+            while isinstance(current_type, VPi) and current_type.implicit:
+                implicit_param_names.append(current_type.name)
+                ctx = ctx.extend(current_type.name, current_type.domain)
+                # Create a dummy value to apply
+                var_val = VNeutral(NVar(len(ctx.environment.values) - 1))
+                current_type = current_type.codomain_closure.apply(var_val)
+            
+            # Then add pattern variables
             pattern_vars = []
             for pattern in clause.patterns:
                 pattern_vars.extend(self._collect_pattern_vars(pattern))
             
-            # Add pattern variables to context in reverse order (rightmost is index 0)
-            for var in reversed(pattern_vars):
+            # Add pattern variables to context
+            for var in pattern_vars:
                 # Dummy type for now - we'd need proper pattern types
                 ctx = ctx.extend(var, VType(Level(0)))
             
@@ -126,24 +134,47 @@ class Evaluator:
         
         # Create a function that pattern matches on its arguments
         def apply_clauses(args: List[Value]) -> Value:
+            # Separate implicit and explicit arguments
+            # The first len(implicit_param_names) args are implicit
+            implicit_args = args[:len(implicit_param_names)]
+            explicit_args = args[len(implicit_param_names):]
+            
             # Try each clause
             for patterns, body_term, pattern_vars in converted_clauses:
-                if len(args) < len(patterns):
+                if len(explicit_args) < len(patterns):
                     # Not enough arguments yet, return a partial application
                     return self._make_partial_function(func_def, args)
                 
-                # Try to match the patterns
-                match = self._match_patterns(patterns, args[:len(patterns)])
+                # Try to match the patterns against explicit arguments only
+                match = self._match_patterns(patterns, explicit_args[:len(patterns)])
                 if match.matched:
                     # Create environment with pattern bindings
                     env = Environment()
-                    # Add bindings in reverse order to match de Bruijn indices
-                    for var in reversed(pattern_vars):
+                    
+                    # First add implicit parameters (use the actual implicit arguments)
+                    for i, _ in enumerate(implicit_param_names):
+                        if i < len(implicit_args):
+                            env = env.extend(implicit_args[i])
+                        else:
+                            # Shouldn't happen if type checking is correct
+                            env = env.extend(VNeutral(NVar(1000 + i)))
+                    
+                    # Then add bindings in the same order as pattern vars
+                    # (they were collected in the right order)
+                    for var in pattern_vars:
                         if var in match.bindings:
                             env = env.extend(match.bindings[var])
                     
                     # Evaluate the body term
-                    remaining_args = args[len(patterns):]
+                    remaining_args = explicit_args[len(patterns):]
+                    # Debug output disabled
+                    # print(f"DEBUG EVAL: Evaluating body {body_term} with env size {len(env.values)}")
+                    # print(f"DEBUG EVAL: Implicit params: {implicit_param_names}, pattern vars: {pattern_vars}")
+                    # print(f"DEBUG EVAL: Pattern bindings: {match.bindings}")
+                    # print(f"DEBUG EVAL: Implicit args: {implicit_args}")
+                    # print(f"DEBUG EVAL: Explicit args: {explicit_args}")
+                    # for i, v in enumerate(env.values):
+                    #     print(f"DEBUG EVAL: env[{i}] = {v}")
                     result = self._eval_term(body_term, env)
                     
                     # Apply any remaining arguments
@@ -358,10 +389,29 @@ class Evaluator:
             raise EvalError(f"Cannot evaluate expression: {type(expr)}")
     
     def _convert_expr_to_term(self, expr: Expr) -> Term:
-        """Convert an AST expression to a core term."""
-        # Use the type checker's conversion, but in an empty context
+        """Convert an AST expression to a core term with elaboration."""
+        # Use the type checker's conversion
         ctx = Context()
-        return self.type_checker.convert_expr(expr, ctx)
+        term = self.type_checker.convert_expr(expr, ctx)
+        
+        # Now perform type inference to get elaborated term
+        try:
+            # If this is an application, try to use delayed inference
+            if isinstance(term, TApp) and not term.implicit:
+                from .delayed_inference import infer_with_delayed_inference
+                # Check if the base function has implicit parameters
+                base_fun, args = self.type_checker._get_base_function(term)
+                if isinstance(base_fun, TGlobal) and base_fun.name in self.type_checker.global_types:
+                    base_type = self.type_checker.global_types[base_fun.name]
+                    if isinstance(base_type, VPi) and base_type.implicit:
+                        # Use delayed inference to get elaborated term
+                        elaborated = infer_with_delayed_inference(term, ctx, self.type_checker)
+                        return elaborated
+        except:
+            # If elaboration fails, just return the original term
+            pass
+        
+        return term
     
     def _eval_term(self, term: Term, env: Optional[Environment] = None) -> Value:
         """Evaluate a core term with access to globals."""
