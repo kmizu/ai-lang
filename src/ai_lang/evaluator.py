@@ -93,6 +93,16 @@ class Evaluator:
                 # Function with pattern matching
                 self.global_env[decl.name.value] = self._make_function(decl)
         
+        elif isinstance(decl, ClassDecl):
+            # Type classes are handled by the type checker
+            # We just need to make the class available as a type constructor
+            pass
+        
+        elif isinstance(decl, InstanceDecl):
+            # Instances are handled by the type checker
+            # Method implementations are stored in the type checker's instance info
+            pass
+        
         # Data declarations and type signatures don't need evaluation
     
     def _make_function(self, func_def: FunctionDef) -> Value:
@@ -423,6 +433,13 @@ class Evaluator:
             if term.name in self.global_env:
                 return self.global_env[term.name]
             else:
+                # Check if this is a type class method
+                for class_name, class_info in self.type_checker.type_classes.items():
+                    if term.name in class_info.methods:
+                        # This is a type class method - we need to resolve the instance
+                        # For now, return a placeholder that will be resolved when applied
+                        return VTypeClassMethod(class_name, term.name)
+                
                 raise EvalError(f"Undefined global: {term.name}")
         elif isinstance(term, TApp):
             # Handle application specially to support globals

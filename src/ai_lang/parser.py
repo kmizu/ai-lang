@@ -19,10 +19,11 @@ class ParseError(Exception):
 class Parser:
     """Recursive descent parser for ai-lang."""
     
-    def __init__(self, tokens: List[Token]):
+    def __init__(self, tokens: List[Token], filename: Optional[str] = None):
         self.tokens = tokens
         self.position = 0
         self.current_token = tokens[0] if tokens else Token(TokenType.EOF, "", 1, 1)
+        self.filename = filename
     
     def advance(self) -> None:
         """Move to the next token."""
@@ -64,6 +65,15 @@ class Parser:
         while self.current_token.type == TokenType.NEWLINE:
             self.advance()
     
+    def make_name(self, token: Token) -> Name:
+        """Create a Name with source location from a token."""
+        location = SourceLocation(token.line, token.column, self.filename)
+        return Name(token.value, location)
+    
+    def current_location(self) -> SourceLocation:
+        """Get the current source location."""
+        return SourceLocation(self.current_token.line, self.current_token.column, self.filename)
+    
     # Type parsing
     
     def parse_type(self) -> Type:
@@ -72,7 +82,34 @@ class Parser:
         return result
     
     def parse_function_type(self) -> Type:
-        """Parse function types (arrows)."""
+        """Parse function types (arrows) and constraint types."""
+        # First check for constraint types (Eq A => ...)
+        constraints = []
+        
+        # Check if we have constraints before the main type
+        if self.current_token.type == TokenType.IDENT:
+            # Look ahead to see if this is a constraint
+            saved_pos = self.position
+            self.advance()
+            
+            # If we see a type variable followed by =>, this is a constraint
+            if self.current_token.type == TokenType.IDENT:
+                next_token = self.peek()
+                if next_token and (next_token.type == TokenType.COMMA or next_token.type == TokenType.DOUBLE_ARROW):
+                    # Restore position and parse constraints
+                    self.position = saved_pos
+                    self.current_token = self.tokens[self.position]
+                    constraints = self.parse_constraints()
+                    self.expect(TokenType.DOUBLE_ARROW)
+                else:
+                    # Not a constraint, restore position
+                    self.position = saved_pos
+                    self.current_token = self.tokens[self.position]
+            else:
+                # Not a constraint, restore position
+                self.position = saved_pos
+                self.current_token = self.tokens[self.position]
+        
         # Check for dependent function type
         if self.match(TokenType.LPAREN, TokenType.LBRACE):
             implicit = self.current_token.type == TokenType.LBRACE
@@ -85,7 +122,7 @@ class Parser:
                 self.peek() and self.peek().type == TokenType.COLON):
                 # Parse parameter name
                 name_token = self.current_token
-                param_name = Name(name_token.value)
+                param_name = self.make_name(name_token)
                 self.advance()
                 
                 self.expect(TokenType.COLON)
@@ -99,7 +136,12 @@ class Parser:
                 self.expect(TokenType.ARROW)
                 return_type = self.parse_type()
                 
-                return FunctionType(param_name, param_type, return_type, implicit)
+                result = FunctionType(param_name, param_type, return_type, implicit)
+                
+                # If we have constraints, wrap in ConstraintType
+                if constraints:
+                    return ConstraintType(constraints, result)
+                return result
             else:
                 # Not a dependent function type, restore and parse normally
                 self.position = saved_pos
@@ -110,7 +152,16 @@ class Parser:
         
         if self.consume(TokenType.ARROW):
             right = self.parse_function_type()
-            return FunctionType(None, left, right, False)
+            result = FunctionType(None, left, right, False)
+            
+            # If we have constraints, wrap in ConstraintType
+            if constraints:
+                return ConstraintType(constraints, result)
+            return result
+        
+        # If we have constraints but no arrow, wrap the type
+        if constraints:
+            return ConstraintType(constraints, left)
         
         return left
     
@@ -158,7 +209,8 @@ class Parser:
         
         # Type constructor or variable
         if self.current_token.type == TokenType.IDENT:
-            name = Name(self.current_token.value)
+            name_token = self.current_token
+            name = self.make_name(name_token)
             self.advance()
             
             # Simple heuristic: uppercase = constructor, lowercase = variable
@@ -184,15 +236,26 @@ class Parser:
             if self.consume(TokenType.LBRACE):
                 implicit = True
             elif not self.consume(TokenType.LPAREN):
-                # Simple lambda without parentheses
-                param_token = self.expect(TokenType.IDENT)
-                param = Name(param_token.value)
+                # Simple lambda without parentheses - can have multiple parameters
+                params = []
+                while self.current_token.type == TokenType.IDENT:
+                    param_token = self.expect(TokenType.IDENT)
+                    params.append(self.make_name(param_token))
+                
+                if not params:
+                    raise ParseError("Expected parameter after lambda", self.current_token)
+                
                 self.expect(TokenType.ARROW)
                 body = self.parse_expr()
-                return Lambda(param, None, body, False)
+                
+                # Build nested lambdas for multiple parameters
+                result = body
+                for param in reversed(params):
+                    result = Lambda(param, None, result, False)
+                return result
             
             param_token = self.expect(TokenType.IDENT)
-            param = Name(param_token.value)
+            param = self.make_name(param_token)
             
             # Optional type annotation
             param_type = None
@@ -215,7 +278,7 @@ class Parser:
         """Parse let expressions."""
         if self.consume(TokenType.LET):
             name_token = self.expect(TokenType.IDENT)
-            name = Name(name_token.value)
+            name = self.make_name(name_token)
             
             # Optional type annotation
             type_annotation = None
@@ -271,7 +334,8 @@ class Parser:
         if self.consume(TokenType.CONS):
             # Build (Cons left right)
             right = self.parse_cons_expr()
-            return App(App(Var(Name("Cons")), left), right)
+            cons_name = Name("Cons", self.current_location())
+            return App(App(Var(cons_name), left), right)
         
         return left
     
@@ -295,7 +359,7 @@ class Parser:
                     fields = []
                     while not self.match(TokenType.RBRACE):
                         field_name_token = self.expect(TokenType.IDENT)
-                        field_name = Name(field_name_token.value)
+                        field_name = self.make_name(field_name_token)
                         self.expect(TokenType.EQUALS)
                         field_expr = self.parse_expr()
                         fields.append((field_name, field_expr))
@@ -324,7 +388,7 @@ class Parser:
             if self.consume(TokenType.DOT):
                 # Field access
                 field_name_token = self.expect(TokenType.IDENT)
-                field_name = Name(field_name_token.value)
+                field_name = self.make_name(field_name_token)
                 left = FieldAccess(left, field_name)
             else:
                 break
@@ -353,14 +417,16 @@ class Parser:
         
         # Variables (possibly qualified)
         if self.current_token.type == TokenType.IDENT:
-            first_name = Name(self.current_token.value)
+            first_token = self.current_token
+            first_name = self.make_name(first_token)
             self.advance()
             
             # Check for qualified name
             if self.match(TokenType.DOT) and self.peek() and self.peek().type == TokenType.IDENT:
                 # This is a qualified name like Math.add
                 self.advance()  # consume dot
-                second_name = Name(self.current_token.value)
+                second_token = self.current_token
+                second_name = self.make_name(second_token)
                 self.advance()
                 return Var(second_name, qualifier=first_name)
             else:
@@ -382,7 +448,7 @@ class Parser:
             while not self.match(TokenType.RBRACE):
                 # Parse field: name = expr
                 field_name_token = self.expect(TokenType.IDENT)
-                field_name = Name(field_name_token.value)
+                field_name = self.make_name(field_name_token)
                 self.expect(TokenType.EQUALS)
                 field_expr = self.parse_expr()
                 fields.append((field_name, field_expr))
@@ -426,7 +492,8 @@ class Parser:
             # This is a cons pattern
             right = self.parse_cons_pattern()
             # Convert to (Cons left right)
-            return PatternConstructor(Name("Cons"), [left, right])
+            cons_name = Name("Cons", self.current_location())
+            return PatternConstructor(cons_name, [left, right])
         
         return left
     
@@ -456,7 +523,8 @@ class Parser:
         if self.consume(TokenType.LBRACKET):
             if self.consume(TokenType.RBRACKET):
                 # Empty list pattern []
-                return PatternConstructor(Name("Nil"), [])
+                nil_name = Name("Nil", self.current_location())
+                return PatternConstructor(nil_name, [])
             else:
                 # Non-empty list - convert to cons pattern
                 # [x, y, z] becomes x :: y :: z :: Nil
@@ -467,9 +535,11 @@ class Parser:
                 self.expect(TokenType.RBRACKET)
                 
                 # Build right-associative cons pattern
-                result = PatternConstructor(Name("Nil"), [])
+                nil_name = Name("Nil", self.current_location())
+                cons_name = Name("Cons", self.current_location())
+                result = PatternConstructor(nil_name, [])
                 for p in reversed(patterns):
-                    result = PatternConstructor(Name("Cons"), [p, result])
+                    result = PatternConstructor(cons_name, [p, result])
                 return result
         
         # Record pattern
@@ -478,7 +548,7 @@ class Parser:
             while not self.match(TokenType.RBRACE):
                 # Parse field: name = pattern
                 field_name_token = self.expect(TokenType.IDENT)
-                field_name = Name(field_name_token.value)
+                field_name = self.make_name(field_name_token)
                 self.expect(TokenType.EQUALS)
                 field_pattern = self.parse_pattern()
                 fields.append((field_name, field_pattern))
@@ -490,7 +560,8 @@ class Parser:
         
         # Constructor or variable pattern
         if self.current_token.type == TokenType.IDENT:
-            name = Name(self.current_token.value)
+            name_token = self.current_token
+            name = self.make_name(name_token)
             self.advance()
             
             # Constructor pattern (uppercase)
@@ -508,7 +579,8 @@ class Parser:
             if (self.current_token.type == TokenType.IDENT and 
                 self.current_token.value[0].isupper()):
                 # Constructor with arguments: (S x)
-                name = Name(self.current_token.value)
+                name_token = self.current_token
+                name = self.make_name(name_token)
                 self.advance()
                 args = []
                 while not self.match(TokenType.RPAREN):
@@ -530,6 +602,14 @@ class Parser:
         """Parse a top-level declaration."""
         self.skip_newlines()
         
+        # Type class declaration
+        if self.consume(TokenType.CLASS):
+            return self.parse_class_decl()
+        
+        # Type class instance declaration
+        if self.consume(TokenType.INSTANCE):
+            return self.parse_instance_decl()
+        
         # Data type declaration
         if self.consume(TokenType.DATA):
             return self.parse_data_decl()
@@ -547,7 +627,7 @@ class Parser:
             # Look ahead to determine if this is a type signature or function def
             saved_pos = self.position
             name_token = self.current_token
-            name = Name(name_token.value)
+            name = self.make_name(name_token)
             self.advance()
             
             # Type signature
@@ -612,7 +692,7 @@ class Parser:
     def parse_data_decl(self) -> DataDecl:
         """Parse a data type declaration."""
         name_token = self.expect(TokenType.IDENT)
-        name = Name(name_token.value)
+        name = self.make_name(name_token)
         
         # Parse type parameters and indices
         type_params = []
@@ -623,14 +703,15 @@ class Parser:
             if self.consume(TokenType.LPAREN):
                 # Index with type
                 idx_name_token = self.expect(TokenType.IDENT)
-                idx_name = Name(idx_name_token.value)
+                idx_name = self.make_name(idx_name_token)
                 self.expect(TokenType.COLON)
                 idx_type = self.parse_type()
                 self.expect(TokenType.RPAREN)
                 indices.append((idx_name, idx_type))
             elif self.current_token.type == TokenType.IDENT:
                 # Type parameter
-                param = Name(self.current_token.value)
+                param_token = self.current_token
+                param = self.make_name(param_token)
                 type_params.append(param)
                 self.advance()
             else:
@@ -672,7 +753,7 @@ class Parser:
             # Save position to check if this is a constructor
             saved_pos = self.position
             ctor_name_token = self.current_token
-            ctor_name = Name(ctor_name_token.value)
+            ctor_name = self.make_name(ctor_name_token)
             self.advance()
             
             # Check if this looks like a constructor (has a colon after name)
@@ -692,7 +773,7 @@ class Parser:
     def parse_record_decl(self) -> RecordDecl:
         """Parse a record type declaration."""
         name_token = self.expect(TokenType.IDENT)
-        name = Name(name_token.value)
+        name = self.make_name(name_token)
         
         # For now, records must have type Type
         self.expect(TokenType.COLON)
@@ -717,7 +798,7 @@ class Parser:
             
             # Parse field: name : type
             field_name_token = self.expect(TokenType.IDENT)
-            field_name = Name(field_name_token.value)
+            field_name = self.make_name(field_name_token)
             self.expect(TokenType.COLON)
             field_type = self.parse_type()
             fields.append((field_name, field_type))
@@ -733,14 +814,14 @@ class Parser:
     def parse_type_alias(self) -> TypeAlias:
         """Parse a type alias declaration."""
         name_token = self.expect(TokenType.IDENT)
-        name = Name(name_token.value)
+        name = self.make_name(name_token)
         
         # Parse type parameters
         params = []
         while (self.current_token.type == TokenType.IDENT and 
                not self.match(TokenType.EQUALS)):
             param_token = self.current_token
-            params.append(Name(param_token.value))
+            params.append(self.make_name(param_token))
             self.advance()
         
         self.expect(TokenType.EQUALS)
@@ -748,13 +829,199 @@ class Parser:
         
         return TypeAlias(name, params, body)
     
+    def parse_class_decl(self) -> ClassDecl:
+        """Parse a type class declaration."""
+        # Parse superclass constraints if present
+        superclasses = []
+        
+        # Check if we have constraints before the class name
+        if self.current_token.type == TokenType.IDENT:
+            # Look ahead to see if this is a constraint
+            saved_pos = self.position
+            self.advance()
+            
+            # If we see a type variable followed by =>, this is a constraint
+            if self.current_token.type == TokenType.IDENT:
+                next_token = self.peek()
+                if next_token and (next_token.type == TokenType.COMMA or next_token.type == TokenType.DOUBLE_ARROW):
+                    # Restore position and parse constraints
+                    self.position = saved_pos
+                    self.current_token = self.tokens[self.position]
+                    superclasses = self.parse_constraints()
+                    self.expect(TokenType.DOUBLE_ARROW)
+                else:
+                    # Not a constraint, restore position
+                    self.position = saved_pos
+                    self.current_token = self.tokens[self.position]
+            else:
+                # Not a constraint, restore position
+                self.position = saved_pos
+                self.current_token = self.tokens[self.position]
+        
+        # Parse class name
+        class_name_token = self.expect(TokenType.IDENT)
+        class_name = self.make_name(class_name_token)
+        
+        # Parse type parameter
+        param_token = self.expect(TokenType.IDENT)
+        type_param = self.make_name(param_token)
+        
+        # Parse where clause
+        self.expect(TokenType.WHERE)
+        self.skip_newlines()
+        
+        # Parse methods
+        methods = []
+        
+        # Keep track of whether we've seen a blank line
+        last_was_newline = False
+        
+        while True:
+            # Check for blank line (end of class block)
+            if self.current_token.type == TokenType.NEWLINE:
+                if last_was_newline:
+                    # Two consecutive newlines - we've left the block
+                    break
+                last_was_newline = True
+                self.advance()
+                continue
+            else:
+                last_was_newline = False
+            
+            self.skip_newlines()
+            
+            # Check if we're at EOF or no longer have an identifier
+            if self.current_token.type != TokenType.IDENT:
+                break
+            
+            # Save position to check if this is a method
+            saved_pos = self.position
+            method_name_token = self.current_token
+            method_name = self.make_name(method_name_token)
+            self.advance()
+            
+            # Check if this looks like a method (has a colon after name)
+            if self.current_token.type == TokenType.COLON:
+                # It's a method
+                self.advance()  # consume colon
+                method_type = self.parse_type()
+                methods.append((method_name, method_type))
+            else:
+                # Not a method, restore position and exit
+                self.position = saved_pos
+                self.current_token = self.tokens[self.position]
+                break
+        
+        return ClassDecl(class_name, type_param, superclasses, methods)
+    
+    def parse_instance_decl(self) -> InstanceDecl:
+        """Parse a type class instance declaration."""
+        # Parse constraints if present
+        constraints = []
+        
+        # Check if we have constraints before the class name
+        if self.current_token.type == TokenType.IDENT:
+            # Look ahead to see if this is a constraint
+            saved_pos = self.position
+            self.advance()
+            
+            # If we see a type followed by =>, this is a constraint
+            if self.current_token.type == TokenType.IDENT or self.current_token.type == TokenType.TYPE:
+                next_token = self.peek()
+                if next_token and (next_token.type == TokenType.COMMA or next_token.type == TokenType.DOUBLE_ARROW):
+                    # Restore position and parse constraints
+                    self.position = saved_pos
+                    self.current_token = self.tokens[self.position]
+                    constraints = self.parse_constraints()
+                    self.expect(TokenType.DOUBLE_ARROW)
+                else:
+                    # Not a constraint, restore position
+                    self.position = saved_pos
+                    self.current_token = self.tokens[self.position]
+            else:
+                # Not a constraint, restore position
+                self.position = saved_pos
+                self.current_token = self.tokens[self.position]
+        
+        # Parse class name
+        class_name_token = self.expect(TokenType.IDENT)
+        class_name = self.make_name(class_name_token)
+        
+        # Parse type
+        instance_type = self.parse_type()
+        
+        # Parse where clause
+        self.expect(TokenType.WHERE)
+        self.skip_newlines()
+        
+        # Parse method implementations
+        methods = []
+        
+        # Keep track of whether we've seen a blank line
+        last_was_newline = False
+        
+        while True:
+            # Check for blank line (end of instance block)
+            if self.current_token.type == TokenType.NEWLINE:
+                if last_was_newline:
+                    # Two consecutive newlines - we've left the block
+                    break
+                last_was_newline = True
+                self.advance()
+                continue
+            else:
+                last_was_newline = False
+            
+            self.skip_newlines()
+            
+            # Check if we're at EOF or no longer have an identifier
+            if self.current_token.type != TokenType.IDENT:
+                break
+            
+            # Save position to check if this is a method implementation
+            saved_pos = self.position
+            method_name_token = self.current_token
+            method_name = self.make_name(method_name_token)
+            self.advance()
+            
+            # Check if this looks like a method implementation (has = after name)
+            if self.current_token.type == TokenType.EQUALS:
+                # It's a method implementation
+                self.advance()  # consume equals
+                implementation = self.parse_expr()
+                methods.append((method_name, implementation))
+            else:
+                # Not a method, restore position and exit
+                self.position = saved_pos
+                self.current_token = self.tokens[self.position]
+                break
+        
+        return InstanceDecl(class_name, instance_type, constraints, methods)
+    
+    def parse_constraints(self) -> List[Tuple[Name, Type]]:
+        """Parse type class constraints (e.g., 'Eq A, Ord A')."""
+        constraints = []
+        
+        while True:
+            # Parse constraint: ClassName Type
+            class_name_token = self.expect(TokenType.IDENT)
+            class_name = self.make_name(class_name_token)
+            constraint_type = self.parse_type()
+            constraints.append((class_name, constraint_type))
+            
+            # Check for more constraints
+            if not self.consume(TokenType.COMMA):
+                break
+        
+        return constraints
+    
     def parse_module(self) -> Module:
         """Parse a module (file)."""
         # Optional module declaration
         module_name = None
         if self.consume(TokenType.MODULE):
             name_token = self.expect(TokenType.IDENT)
-            module_name = Name(name_token.value)
+            module_name = self.make_name(name_token)
             self.skip_newlines()
         
         # Parse imports and exports
@@ -793,7 +1060,7 @@ class Parser:
         # import ModuleName as Alias
         # import ModuleName (item1, item2)
         module_name_token = self.expect(TokenType.IDENT)
-        module_name = Name(module_name_token.value)
+        module_name = self.make_name(module_name_token)
         
         alias = None
         items = None
@@ -801,18 +1068,18 @@ class Parser:
         if self.consume(TokenType.AS):
             # import Module as Alias
             alias_token = self.expect(TokenType.IDENT)
-            alias = Name(alias_token.value)
+            alias = self.make_name(alias_token)
         elif self.consume(TokenType.LPAREN):
             # import Module (item1, item2)
             items = []
             while not self.match(TokenType.RPAREN):
                 item_name_token = self.expect(TokenType.IDENT)
-                item_name = Name(item_name_token.value)
+                item_name = self.make_name(item_name_token)
                 item_alias = None
                 
                 if self.consume(TokenType.AS):
                     item_alias_token = self.expect(TokenType.IDENT)
-                    item_alias = Name(item_alias_token.value)
+                    item_alias = self.make_name(item_alias_token)
                 
                 items.append(ImportItem(item_name, item_alias))
                 
@@ -828,17 +1095,17 @@ class Parser:
         names = []
         
         name_token = self.expect(TokenType.IDENT)
-        names.append(Name(name_token.value))
+        names.append(self.make_name(name_token))
         
         while self.consume(TokenType.COMMA):
             name_token = self.expect(TokenType.IDENT)
-            names.append(Name(name_token.value))
+            names.append(self.make_name(name_token))
         
         return Export(names)
 
 
-def parse(source: str) -> Module:
+def parse(source: str, filename: Optional[str] = None) -> Module:
     """Parse source code into an AST."""
     tokens = lex(source)
-    parser = Parser(tokens)
+    parser = Parser(tokens, filename)
     return parser.parse_module()

@@ -1,0 +1,20 @@
+-- Simple test of multi-parameter lambda syntax
+
+data Nat : Type where
+  Z : Nat
+  S : Nat -> Nat
+
+-- Test function definition with pattern matching
+const : Nat -> Nat -> Nat
+const x y = x
+
+-- Test application
+test1 : Nat
+test1 = const Z (S Z)
+
+-- Test nested application
+test2 : Nat
+test2 = const (S Z) (const Z (S (S Z)))
+
+main : Nat
+main = test2

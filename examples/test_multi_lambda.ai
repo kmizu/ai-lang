@@ -1,0 +1,33 @@
+-- Test multi-parameter lambda syntax
+
+-- Data type
+data Nat : Type where
+  Z : Nat
+  S : Nat -> Nat
+
+-- Helper function
+plus : Nat -> Nat -> Nat
+plus Z y = y
+plus (S x) y = S (plus x y)
+
+-- Simple function using multi-parameter lambda
+add : Nat -> Nat -> Nat
+add x y = plus x y
+
+-- Test direct application of multi-parameter lambda
+test_lambda : Nat
+test_lambda = (\x y -> plus x y) (S Z) (S Z)
+
+-- Test nested lambdas with pattern syntax
+const : {A : Type} -> {B : Type} -> A -> B -> A
+const x y = x
+
+-- Test application
+test1 : Nat
+test1 = add (S Z) (S (S Z))
+
+test2 : Nat
+test2 = const {Nat} {Nat} Z (S Z)
+
+main : Nat
+main = test1

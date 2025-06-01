@@ -1,0 +1,39 @@
+-- Simple example for testing coverage checking
+
+data Bool : Type where
+  True : Bool
+  False : Bool
+
+data Nat : Type where
+  Z : Nat
+  S : Nat -> Nat
+
+-- Good: Exhaustive pattern matching
+not : Bool -> Bool
+not True = False
+not False = True
+
+-- Good: Using wildcards
+isZero : Nat -> Bool
+isZero Z = True
+isZero _ = False
+
+-- Good: Complete coverage with nested patterns
+and : Bool -> Bool -> Bool
+and True True = True
+and True False = False
+and False True = False
+and False False = False
+
+-- Bad: Missing case (uncomment to test)
+badNot : Bool -> Bool
+badNot True = False
+-- Missing False case
+
+-- Bad: Missing constructor (uncomment to test)
+-- pred : Nat -> Nat
+-- pred (S n) = n
+-- -- Missing Z case
+
+main : Bool
+main = and (not True) (isZero Z)

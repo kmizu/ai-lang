@@ -1,0 +1,59 @@
+-- Examples demonstrating positivity checking
+
+-- Good: Simple recursive data types (strictly positive)
+data Nat : Type where
+  Z : Nat
+  S : Nat -> Nat
+
+data List (A : Type) : Type where
+  Nil : List A
+  Cons : A -> List A -> List A
+
+-- Good: Mutually recursive data types
+data Tree (A : Type) : Type where
+  Leaf : A -> Tree A
+  Node : Forest A -> Tree A
+
+data Forest (A : Type) : Type where
+  Empty : Forest A
+  Trees : Tree A -> Forest A -> Forest A
+
+-- Good: Nested data types (still positive)
+data Rose (A : Type) : Type where
+  Rose : A -> List (Rose A) -> Rose A
+
+-- Good: Function in positive position (result type)
+data Producer (A : Type) : Type where
+  Produce : (Nat -> A) -> Producer A
+
+-- Good: Parameterized with constraints
+data Sized (A : Type) (n : Nat) : Type where
+  MkSized : A -> Sized A n
+
+-- Bad: Negative occurrence (uncomment to see error)
+-- This would allow non-terminating computations
+-- data Bad : Type where
+--   MkBad : (Bad -> Nat) -> Bad
+
+-- Bad: Non-strictly positive (uncomment to see error)
+-- data Weird : Type where
+--   MkWeird : ((Weird -> Nat) -> Nat) -> Weird
+
+-- Example usage of positive data types
+treeSize : {A : Type} -> Tree A -> Nat
+treeSize (Leaf _) = S Z
+treeSize (Node forest) = forestSize forest
+  where
+    forestSize : {A : Type} -> Forest A -> Nat
+    forestSize Empty = Z
+    forestSize (Trees t f) = plus (treeSize t) (forestSize f)
+    
+    plus : Nat -> Nat -> Nat
+    plus Z m = m
+    plus (S n) m = S (plus n m)
+
+exampleTree : Tree Nat
+exampleTree = Node (Trees (Leaf (S Z)) (Trees (Leaf (S (S Z))) Empty))
+
+main : Nat
+main = treeSize exampleTree

@@ -1,0 +1,134 @@
+-- Comprehensive demonstration of totality checking in ai-lang
+-- This file shows examples of termination, coverage, and positivity checking
+
+-- Basic data types
+data Nat : Type where
+  Z : Nat
+  S : Nat -> Nat
+
+data Bool : Type where
+  True : Bool
+  False : Bool
+
+-- ============================================================================
+-- TERMINATION CHECKING
+-- ============================================================================
+
+-- Good: Structural recursion on Nat (decreasing on first argument)
+plus : Nat -> Nat -> Nat
+plus Z m = m
+plus (S n) m = S (plus n m)
+
+-- Good: Structural recursion (decreasing on first argument)
+mult : Nat -> Nat -> Nat
+mult Z m = Z
+mult (S n) m = plus m (mult n m)
+
+-- Good: More complex structural recursion
+ack : Nat -> Nat -> Nat
+ack Z m = S m
+ack (S n) Z = ack n (S Z)
+ack (S n) (S m) = ack n (ack (S n) m)
+
+-- To test termination failures, uncomment these:
+-- -- Bad: Non-terminating (same argument)
+-- loop : Nat -> Nat
+-- loop n = loop n
+--
+-- -- Bad: Increasing argument
+-- bad : Nat -> Nat  
+-- bad n = bad (S n)
+
+-- ============================================================================
+-- COVERAGE CHECKING
+-- ============================================================================
+
+-- Good: Exhaustive patterns for Bool
+not : Bool -> Bool
+not True = False
+not False = True
+
+-- Good: Exhaustive patterns with wildcards
+isZero : Nat -> Bool
+isZero Z = True
+isZero _ = False
+
+-- Good: Multiple arguments with complete coverage
+and : Bool -> Bool -> Bool
+and True True = True
+and True False = False
+and False True = False
+and False False = False
+
+-- Good: Nested patterns
+isOne : Nat -> Bool
+isOne Z = False
+isOne (S Z) = True
+isOne (S (S _)) = False
+
+-- To test coverage failures, uncomment these:
+-- -- Bad: Missing case
+-- partial : Bool -> Bool
+-- partial True = False
+-- -- Missing: False case
+--
+-- -- Bad: Missing constructor  
+-- pred : Nat -> Nat
+-- pred (S n) = n
+-- -- Missing: Z case
+
+-- ============================================================================
+-- POSITIVITY CHECKING
+-- ============================================================================
+
+-- Good: Simple recursive type (List is strictly positive)
+data List (A : Type) : Type where
+  Nil : {A : Type} -> List A
+  Cons : {A : Type} -> A -> List A -> List A
+
+-- Good: Nested recursive type (Tree is strictly positive)
+data Tree (A : Type) : Type where
+  Leaf : {A : Type} -> A -> Tree A
+  Node : {A : Type} -> Tree A -> Tree A -> Tree A
+
+-- Good: Parameterized type with multiple constructors
+data Maybe (A : Type) : Type where
+  Nothing : {A : Type} -> Maybe A
+  Just : {A : Type} -> A -> Maybe A
+
+-- To test positivity failures, uncomment these:
+-- -- Bad: Negative occurrence (appears to left of arrow)
+-- data Bad1 : Type where
+--   MkBad1 : (Bad1 -> Nat) -> Bad1
+--
+-- -- Bad: Nested negative occurrence
+-- data Bad2 : Type where
+--   MkBad2 : ((Bad2 -> Nat) -> Nat) -> Bad2
+
+-- ============================================================================
+-- USING THE DEFINED FUNCTIONS
+-- ============================================================================
+
+-- List operations using our strictly positive List type
+length : {A : Type} -> List A -> Nat
+length Nil = Z
+length (Cons _ xs) = S (length xs)
+
+-- Tree operations  
+treeSize : {A : Type} -> Tree A -> Nat
+treeSize (Leaf _) = S Z
+treeSize (Node l r) = plus (treeSize l) (treeSize r)
+
+-- Example computations
+two : Nat
+two = S (S Z)
+
+three : Nat
+three = S two
+
+six : Nat
+six = mult two three
+
+-- Main result
+main : Nat
+main = six

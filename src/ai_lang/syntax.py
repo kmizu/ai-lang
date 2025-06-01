@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Tuple
 from abc import ABC, abstractmethod
 
 
@@ -98,6 +98,17 @@ class UniverseType(Type):
     
     def __repr__(self) -> str:
         return f"Type{self.level}" if self.level > 0 else "Type"
+
+
+@dataclass(frozen=True)
+class ConstraintType(Type):
+    """Type with constraints (e.g., Eq A => A -> A -> Bool)."""
+    constraints: List[Tuple[Name, Type]]  # [(ClassName, Type)]
+    body: Type
+    
+    def __repr__(self) -> str:
+        constraints_str = ", ".join(f"{c.value} {t}" for c, t in self.constraints)
+        return f"ConstraintType({constraints_str} => {self.body})"
 
 
 # Expressions
@@ -418,6 +429,40 @@ class Export(Declaration):
     def __repr__(self) -> str:
         names_str = ", ".join(n.value for n in self.names)
         return f"Export({names_str})"
+
+
+@dataclass(frozen=True)
+class ClassDecl(Declaration):
+    """Type class declaration."""
+    name: Name
+    type_param: Name
+    superclasses: List[Tuple[Name, Type]]  # [(ClassName, Type)]
+    methods: List[Tuple[Name, Type]]  # [(method_name, method_type)]
+    
+    def __repr__(self) -> str:
+        super_str = ", ".join(f"{c.value} {t}" for c, t in self.superclasses) if self.superclasses else ""
+        methods_str = "; ".join(f"{n.value} : {t}" for n, t in self.methods)
+        if super_str:
+            return f"ClassDecl(class {super_str} => {self.name.value} {self.type_param.value} where [{methods_str}])"
+        else:
+            return f"ClassDecl(class {self.name.value} {self.type_param.value} where [{methods_str}])"
+
+
+@dataclass(frozen=True)
+class InstanceDecl(Declaration):
+    """Type class instance declaration."""
+    class_name: Name
+    type: Type
+    constraints: List[Tuple[Name, Type]]  # [(ClassName, Type)]
+    methods: List[Tuple[Name, Expr]]  # [(method_name, implementation)]
+    
+    def __repr__(self) -> str:
+        constraints_str = ", ".join(f"{c.value} {t}" for c, t in self.constraints) if self.constraints else ""
+        methods_str = "; ".join(f"{n.value} = {e}" for n, e in self.methods)
+        if constraints_str:
+            return f"InstanceDecl(instance {constraints_str} => {self.class_name.value} {self.type} where [{methods_str}])"
+        else:
+            return f"InstanceDecl(instance {self.class_name.value} {self.type} where [{methods_str}])"
 
 
 @dataclass(frozen=True)

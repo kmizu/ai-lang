@@ -1,0 +1,29 @@
+-- Complete test of totality checking features
+
+-- Data types
+data Nat : Type where
+  Z : Nat
+  S : Nat -> Nat
+
+data Bool : Type where
+  True : Bool
+  False : Bool
+
+-- Test 1: Termination checking - GOOD
+plus : Nat -> Nat -> Nat
+plus Z m = m
+plus (S n) m = S (plus n m)
+
+-- Test 2: Coverage checking - GOOD  
+not : Bool -> Bool
+not True = False
+not False = True
+
+-- Test 3: Positivity checking - GOOD
+data List (A : Type) : Type where
+  Nil : {A : Type} -> List A
+  Cons : {A : Type} -> A -> List A -> List A
+
+-- Main
+main : Nat
+main = plus (S Z) (S Z)

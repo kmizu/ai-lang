@@ -1,0 +1,30 @@
+-- Simple demonstration of optimization
+-- Run with: ai-lang optimization_demo_simple.ai --show-optimized
+
+-- Define Bool type
+data Bool : Type where
+    True : Bool
+    False : Bool
+
+-- Example 1: Simple function that can be eta-reduced
+id : {A : Type} -> A -> A
+id x = x
+
+-- This could be eta-reduced but our current implementation
+-- doesn't handle it at the definition level yet
+forward : {A : Type} -> A -> A
+forward x = id x
+
+-- Example 2: Dead code elimination
+-- This function is never used and will be removed
+unused : Bool -> Bool
+unused True = False
+unused False = True
+
+-- Example 3: Let binding elimination
+test_let : Bool -> Bool
+test_let b = let unused1 = True in let unused2 = False in let result = b in result
+
+-- Main function uses some of the above
+main : Bool
+main = test_let (forward True)

@@ -1,0 +1,34 @@
+-- Demonstration of Improved Error Messages in ai-lang
+-- This file intentionally contains errors to showcase the enhanced error reporting
+
+-- 1. Unknown Variable Error with Suggestions
+-- Uncomment to see the error:
+-- test1 : Nat
+-- test1 = let x = 42 in let y = 17 in z
+
+-- 2. Type Mismatch with Helpful Context  
+-- Uncomment to see the error:
+-- test2 : Nat -> Nat
+-- test2 n = n + "hello"
+
+-- 3. Constructor Suggestions
+-- First define a simple data type
+data Maybe (A : Type) : Type where
+  Nothing : Maybe A
+  Just : A -> Maybe A
+
+-- Uncomment to see constructor suggestion:
+-- test3 : Maybe Nat
+-- test3 = Nothng  -- Typo in constructor name
+
+-- 4. Verbose Mode Type Derivation
+-- Run with -v flag to see type derivation traces
+identity : {A : Type} -> A -> A
+identity x = x
+
+compose : {A : Type} -> {B : Type} -> {C : Type} -> (B -> C) -> (A -> B) -> A -> C
+compose f g x = f (g x)
+
+-- This succeeds but shows derivation steps in verbose mode
+main : Nat
+main = identity {Nat} 42

@@ -1,0 +1,70 @@
+-- Examples demonstrating termination checking
+
+-- Data type definitions
+data Nat : Type where
+  Z : Nat
+  S : Nat -> Nat
+
+data Bool : Type where
+  True : Bool
+  False : Bool
+
+-- Helper functions for factorial
+plus : Nat -> Nat -> Nat
+plus Z m = m
+plus (S n) m = S (plus n m)
+
+mult : Nat -> Nat -> Nat
+mult Z m = Z
+mult (S n) m = plus m (mult n m)
+
+-- Good: Structural recursion on natural numbers
+factorial : Nat -> Nat
+factorial Z = S Z
+factorial (S n) = mult (S n) (factorial n)
+
+-- Good: Mutual recursion with decreasing arguments
+-- Note: ai-lang doesn't support mutual recursion yet, so we comment this out
+-- even : Nat -> Bool
+-- even Z = True
+-- even (S n) = odd n
+
+-- odd : Nat -> Bool
+-- odd Z = False
+-- odd (S n) = even n
+
+-- Good: Structural recursion on lists
+data List (A : Type) : Type where
+  Nil : {A : Type} -> List A
+  Cons : {A : Type} -> A -> List A -> List A
+
+length : {A : Type} -> List A -> Nat
+length Nil = Z
+length (Cons x xs) = S (length xs)
+
+append : {A : Type} -> List A -> List A -> List A
+append Nil ys = ys
+append (Cons x xs) ys = Cons x (append xs ys)
+
+-- Good: Nested pattern matching with structural recursion
+sum : List Nat -> Nat
+sum Nil = Z
+sum (Cons x xs) = plus x (sum xs)
+
+-- Bad: Non-terminating recursion (uncomment to see error)
+-- loop : Nat -> Nat
+-- loop n = loop n
+
+-- Bad: Recursion on increasing argument (uncomment to see error)
+-- bad : Nat -> Nat
+-- bad n = bad (S n)
+
+-- Bad: Mutual recursion without decrease (uncomment to see error)
+-- ping : Nat -> Nat
+-- ping n = pong n
+-- 
+-- pong : Nat -> Nat
+-- pong n = ping n
+
+main : Nat
+main = factorial (S (S (S Z)))  -- 3! = 6

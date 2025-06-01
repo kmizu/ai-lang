@@ -1,0 +1,70 @@
+-- Demonstration of ai-lang optimization passes
+
+-- Example 1: Eta-reduction
+-- This function just forwards to 'id', so it can be eta-reduced
+id : {A : Type} -> A -> A
+id x = x
+
+redundant_id : {A : Type} -> A -> A
+redundant_id = \x -> id x  -- Will be optimized to just 'id'
+
+-- Example 2: Dead code elimination
+-- These functions are never used and will be removed
+unused_helper : Nat -> Nat
+unused_helper x = S (S x)
+
+another_unused : Nat -> Nat -> Nat
+another_unused x y = 
+    let temp1 = S x in
+    let temp2 = S y in
+    let result = S (S (S Z)) in  -- temp1 and temp2 are unused
+    result
+
+-- Example 3: Inlining
+-- Small functions will be inlined at call sites
+double : Nat -> Nat
+double x = S (S x)
+
+triple : Nat -> Nat
+triple x = S (double x)
+
+-- Example 4: Combined optimizations
+-- This demonstrates multiple optimizations working together
+compose : {A : Type} -> {B : Type} -> {C : Type} -> (B -> C) -> (A -> B) -> A -> C
+compose f g = \x -> f (g x)
+
+-- After eta-reduction, this becomes: compose f g = f . g (conceptually)
+
+-- Small helper that will be inlined
+increment : Nat -> Nat
+increment n = S n
+
+-- This will have multiple optimizations applied:
+-- 1. 'increment' calls will be inlined
+-- 2. Dead let bindings will be removed
+-- 3. Eta-reduction where applicable
+complex_example : Nat -> Nat
+complex_example n =
+    let unused1 = increment n in      -- Dead code - will be removed
+    let unused2 = double unused1 in   -- Dead code - will be removed
+    let used = increment (increment n) in  -- Will be inlined to S (S n)
+    used
+
+-- Main function that uses some of the above
+main : Nat
+main = 
+    let x = triple (S Z) in         -- triple and double will be inlined
+    let y = complex_example x in    -- complex_example optimized
+    let z = redundant_id y in       -- redundant_id optimized to just id
+    z
+
+-- To see the optimizations in action, run:
+-- ai-lang optimization_demo.ai --show-optimized
+-- 
+-- Or to see specific passes:
+-- ai-lang optimization_demo.ai --opt-passes eta-reduction --show-optimized
+-- ai-lang optimization_demo.ai --opt-passes dead-code-elimination --show-optimized
+-- ai-lang optimization_demo.ai --opt-passes inlining --show-optimized
+--
+-- To run without optimization:
+-- ai-lang optimization_demo.ai --no-optimize

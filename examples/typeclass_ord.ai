@@ -1,0 +1,82 @@
+-- Type class example with superclass constraints
+
+data Bool : Type where
+  True : Bool
+  False : Bool
+
+data Ordering : Type where
+  LT : Ordering
+  EQ : Ordering
+  GT : Ordering
+
+-- Equality type class
+class Eq A where
+  eq : A -> A -> Bool
+  neq : A -> A -> Bool
+
+-- Ordering type class with Eq as superclass
+class Eq A => Ord A where
+  compare : A -> A -> Ordering
+  lt : A -> A -> Bool
+  lte : A -> A -> Bool
+  gt : A -> A -> Bool
+  gte : A -> A -> Bool
+
+-- Bool equality
+boolEq : Bool -> Bool -> Bool
+boolEq True True = True
+boolEq False False = True
+boolEq _ _ = False
+
+not : Bool -> Bool
+not True = False
+not False = True
+
+-- Instance for Eq Bool
+instance Eq Bool where
+  eq = boolEq
+  neq = \x y -> not (boolEq x y)
+
+-- Bool comparison
+boolCompare : Bool -> Bool -> Ordering
+boolCompare False False = EQ
+boolCompare False True = LT
+boolCompare True False = GT
+boolCompare True True = EQ
+
+-- Instance for Ord Bool (False < True)
+instance Eq Bool => Ord Bool where
+  compare = boolCompare
+  lt = \x y -> case boolCompare x y of
+    LT -> True
+    _ -> False
+  lte = \x y -> case boolCompare x y of
+    GT -> False
+    _ -> True
+  gt = \x y -> case boolCompare x y of
+    GT -> True
+    _ -> False
+  gte = \x y -> case boolCompare x y of
+    LT -> False
+    _ -> True
+
+-- Generic functions using type classes
+min : {A : Type} -> Ord A => A -> A -> A
+min x y = case lte x y of
+  True -> x
+  False -> y
+
+max : {A : Type} -> Ord A => A -> A -> A
+max x y = case gte x y of
+  True -> x
+  False -> y
+
+-- Test examples
+test1 : Bool
+test1 = min True False  -- Should be False
+
+test2 : Bool
+test2 = max True False  -- Should be True
+
+main : Bool
+main = test1

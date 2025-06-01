@@ -1,0 +1,73 @@
+-- Examples demonstrating coverage checking
+
+data Bool : Type where
+  True : Bool
+  False : Bool
+
+data Maybe (A : Type) : Type where
+  Nothing : Maybe A
+  Just : A -> Maybe A
+
+-- Good: Exhaustive pattern matching
+not : Bool -> Bool
+not True = False
+not False = True
+
+and : Bool -> Bool -> Bool
+and True True = True
+and True False = False
+and False True = False
+and False False = False
+
+-- Good: Using wildcard patterns
+or : Bool -> Bool -> Bool
+or True _ = True
+or False b = b
+
+-- Good: Exhaustive Maybe patterns
+fromMaybe : {A : Type} -> A -> Maybe A -> A
+fromMaybe default Nothing = default
+fromMaybe default (Just x) = x
+
+-- Good: Nested patterns
+isJustTrue : Maybe Bool -> Bool
+isJustTrue Nothing = False
+isJustTrue (Just True) = True
+isJustTrue (Just False) = False
+
+-- Good: Case expressions with exhaustive patterns
+maybeMap : {A : Type} -> {B : Type} -> (A -> B) -> Maybe A -> Maybe B
+maybeMap f mx = case mx of
+  Nothing -> Nothing
+  Just x -> Just (f x)
+
+-- Bad: Non-exhaustive patterns (uncomment to see error)
+-- badNot : Bool -> Bool
+-- badNot True = False
+-- -- Missing: False case
+
+-- Bad: Non-exhaustive Maybe (uncomment to see error)
+-- unsafeFromJust : {A : Type} -> Maybe A -> A
+-- unsafeFromJust (Just x) = x
+-- -- Missing: Nothing case
+
+-- Bad: Missing nested pattern (uncomment to see error)
+-- incomplete : Maybe Bool -> Bool
+-- incomplete Nothing = False
+-- incomplete (Just True) = True
+-- -- Missing: Just False case
+
+-- Demo: Pattern matching with multiple arguments
+data Ordering : Type where
+  LT : Ordering
+  EQ : Ordering
+  GT : Ordering
+
+compare : Nat -> Nat -> Ordering
+compare Z Z = EQ
+compare Z (S _) = LT
+compare (S _) Z = GT
+compare (S m) (S n) = compare m n
+
+main : Bool
+main = and (not False) (fromMaybe False (Just True))

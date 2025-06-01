@@ -1,0 +1,62 @@
+-- Type class demonstration for ai-lang
+
+-- Basic data types
+data Nat : Type where
+  Z : Nat
+  S : Nat -> Nat
+
+data Bool : Type where
+  True : Bool
+  False : Bool
+
+-- Equality type class
+class Eq A where
+  eq : A -> A -> Bool
+  neq : A -> A -> Bool
+
+-- Nat equality implementation
+natEq : Nat -> Nat -> Bool
+natEq Z Z = True
+natEq (S n) (S m) = natEq n m
+natEq _ _ = False
+
+-- Bool negation
+not : Bool -> Bool
+not True = False
+not False = True
+
+-- Instance for Nat
+instance Eq Nat where
+  eq = natEq
+  neq = \x y -> not (natEq x y)
+
+-- Instance for Bool
+boolEq : Bool -> Bool -> Bool
+boolEq True True = True
+boolEq False False = True
+boolEq _ _ = False
+
+instance Eq Bool where
+  eq = boolEq
+  neq = \x y -> not (boolEq x y)
+
+-- Generic equality function using type class constraint
+equal : {A : Type} -> Eq A => A -> A -> Bool
+equal x y = eq x y
+
+-- Test examples
+test1 : Bool
+test1 = equal {Nat} Z Z  -- Should be True
+
+test2 : Bool
+test2 = equal {Nat} Z (S Z)  -- Should be False
+
+test3 : Bool
+test3 = equal {Bool} True True  -- Should be True
+
+test4 : Bool
+test4 = equal {Bool} True False  -- Should be False
+
+-- Main function
+main : Bool
+main = test1

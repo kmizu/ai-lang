@@ -1,0 +1,23 @@
+-- Test optimization passes
+
+data Bool : Type where
+    True : Bool
+    False : Bool
+
+-- Unused function - should be removed by dead code elimination
+not : Bool -> Bool
+not True = False
+not False = True
+
+-- Another unused function
+and : Bool -> Bool -> Bool
+and True True = True
+and _ _ = False
+
+-- Simple identity function
+id : Bool -> Bool
+id x = x
+
+-- Main function only uses id
+main : Bool
+main = id True

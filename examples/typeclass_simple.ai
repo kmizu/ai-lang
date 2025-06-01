@@ -1,0 +1,27 @@
+-- Simple type class example for ai-lang
+
+-- Basic data types
+data Bool : Type where
+  True : Bool
+  False : Bool
+
+-- Simple Show type class
+class Show A where
+  show : A -> String
+
+-- Instance for Bool
+instance Show Bool where
+  show = showBool
+
+-- Implementation function
+showBool : Bool -> String
+showBool True = "True"
+showBool False = "False"
+
+-- Test using the type class
+testShow : String
+testShow = show True
+
+-- Main entry point
+main : String
+main = testShow

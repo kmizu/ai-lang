@@ -1,0 +1,44 @@
+-- Demonstration of totality checking in ai-lang
+-- Shows termination, coverage, and positivity checking
+
+data Nat : Type where
+  Z : Nat
+  S : Nat -> Nat
+
+data Bool : Type where
+  True : Bool
+  False : Bool
+
+-- TERMINATION: Good examples
+plus : Nat -> Nat -> Nat
+plus Z m = m
+plus (S n) m = S (plus n m)
+
+mult : Nat -> Nat -> Nat
+mult Z m = Z
+mult (S n) m = plus m (mult n m)
+
+factorial : Nat -> Nat
+factorial Z = S Z
+factorial (S n) = mult (S n) (factorial n)
+
+-- COVERAGE: Good examples  
+not : Bool -> Bool
+not True = False
+not False = True
+
+isZero : Nat -> Bool
+isZero Z = True
+isZero _ = False
+
+-- POSITIVITY: The built-in types Nat and Bool are strictly positive
+
+-- Example usage
+three : Nat
+three = S (S (S Z))
+
+six : Nat  
+six = plus three three
+
+main : Nat
+main = factorial three  -- 3! = 6

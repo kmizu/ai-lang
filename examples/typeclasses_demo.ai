@@ -1,0 +1,48 @@
+-- Type classes demonstration
+
+data Bool : Type where
+  True : Bool
+  False : Bool
+
+data Nat : Type where
+  Z : Nat
+  S : Nat -> Nat
+
+-- Define the Eq type class
+class Eq A where
+  eq : A -> A -> Bool
+
+-- Bool instance
+boolEq : Bool -> Bool -> Bool
+boolEq True True = True
+boolEq False False = True
+boolEq _ _ = False
+
+instance Eq Bool where
+  eq = boolEq
+
+-- Nat instance  
+natEq : Nat -> Nat -> Bool
+natEq Z Z = True
+natEq (S n) (S m) = natEq n m
+natEq _ _ = False
+
+instance Eq Nat where
+  eq = natEq
+
+-- Function with type class constraint
+equal : {A : Type} -> Eq A => A -> A -> Bool
+equal x y = eq x y
+
+-- Test the function with explicit type application
+test1 : Bool
+test1 = equal {Bool} True True  -- Should be True
+
+test2 : Bool
+test2 = equal {Bool} False True  -- Should be False
+
+test3 : Bool
+test3 = equal {Nat} Z Z  -- Should be True
+
+test4 : Bool
+test4 = equal {Nat} (S Z) Z  -- Should be False

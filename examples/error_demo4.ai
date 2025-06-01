@@ -1,0 +1,6 @@
+-- Example 4: Missing type annotation
+-- Shows suggestion to add type annotations
+
+-- This lambda needs a type annotation because we can't infer it
+main : Nat -> Nat
+main = \x -> x + 1  -- Error: Cannot infer type of lambda without annotation

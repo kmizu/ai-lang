@@ -1,0 +1,21 @@
+-- Test inlining optimization
+
+data Bool : Type where
+    True : Bool
+    False : Bool
+
+-- Small function that should be inlined
+returnTrue : Bool
+returnTrue = True
+
+-- Another small function
+returnFalse : Bool  
+returnFalse = False
+
+-- Function that uses the above
+test : Bool -> Bool
+test True = returnTrue
+test False = returnFalse
+
+main : Bool
+main = test True

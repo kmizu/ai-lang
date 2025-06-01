@@ -7,7 +7,7 @@ and computation during type checking.
 
 from __future__ import annotations
 from dataclasses import dataclass
-from typing import List, Dict, Optional, Union, Any
+from typing import List, Dict, Optional, Union, Any, Tuple
 from abc import ABC, abstractmethod
 from enum import Enum, auto
 
@@ -145,6 +145,50 @@ class VNeutral(Value):
     
     def quote(self, level: int = 0) -> Term:
         return self.neutral.quote(level)
+
+
+@dataclass(frozen=True)
+class VConstraint(Value):
+    """Type class constraint value (e.g., Eq A)."""
+    class_name: str
+    type_arg: Value
+    
+    def quote(self, level: int = 0) -> Term:
+        return TConstraint(self.class_name, self.type_arg.quote(level))
+
+
+@dataclass(frozen=True)
+class VConstraintPi(Value):
+    """Constrained function type value (e.g., Eq A => A -> A -> Bool)."""
+    constraints: List[VConstraint]
+    body: Value
+    
+    def quote(self, level: int = 0) -> Term:
+        constraint_terms = [(c.class_name, c.type_arg.quote(level)) for c in self.constraints]
+        return TConstraintPi(constraint_terms, self.body.quote(level))
+
+
+@dataclass(frozen=True)
+class VInstance(Value):
+    """Type class instance value."""
+    class_name: str
+    type_arg: Value
+    methods: Dict[str, Value]  # method name -> implementation
+    
+    def quote(self, level: int = 0) -> Term:
+        method_terms = {name: impl.quote(level) for name, impl in self.methods.items()}
+        return TInstance(self.class_name, self.type_arg.quote(level), method_terms)
+
+
+@dataclass(frozen=True)
+class VTypeClassMethod(Value):
+    """Type class method that needs instance resolution."""
+    class_name: str
+    method_name: str
+    
+    def quote(self, level: int = 0) -> Term:
+        # Quote as a global reference
+        return TGlobal(self.method_name)
 
 
 # Neutral terms (cannot be reduced further)
@@ -295,6 +339,42 @@ class TGlobal(Term):
         return VNeutral(NGlobal(self.name))
 
 
+@dataclass(frozen=True)
+class TConstraint(Term):
+    """Type class constraint term."""
+    class_name: str
+    type_arg: Term
+    
+    def eval(self, env: Environment) -> Value:
+        type_arg_val = self.type_arg.eval(env)
+        return VConstraint(self.class_name, type_arg_val)
+
+
+@dataclass(frozen=True)
+class TConstraintPi(Term):
+    """Constrained function type term."""
+    constraints: List[Tuple[str, Term]]  # [(class_name, type_arg)]
+    body: Term
+    
+    def eval(self, env: Environment) -> Value:
+        constraint_vals = [VConstraint(cn, ta.eval(env)) for cn, ta in self.constraints]
+        body_val = self.body.eval(env)
+        return VConstraintPi(constraint_vals, body_val)
+
+
+@dataclass(frozen=True)
+class TInstance(Term):
+    """Type class instance term."""
+    class_name: str
+    type_arg: Term
+    methods: Dict[str, Term]  # method name -> implementation
+    
+    def eval(self, env: Environment) -> Value:
+        type_arg_val = self.type_arg.eval(env)
+        method_vals = {name: impl.eval(env) for name, impl in self.methods.items()}
+        return VInstance(self.class_name, type_arg_val, method_vals)
+
+
 # Environment and closures
 @dataclass
 class Environment:
@@ -331,6 +411,16 @@ class Closure:
         return self.term.eval(new_env)
 
 
+@dataclass
+class ConstantClosure:
+    """Closure that always returns the same value."""
+    value: Value
+    
+    def apply(self, value: Value) -> Value:
+        """Apply closure - ignores input and returns constant."""
+        return self.value
+
+
 def apply(function: Value, argument: Value) -> Value:
     """Apply a function value to an argument value."""
     if isinstance(function, VLambda):
@@ -340,6 +430,10 @@ def apply(function: Value, argument: Value) -> Value:
     elif isinstance(function, VConstructor):
         # Partial constructor application
         return VConstructor(function.name, function.args + [argument])
+    elif isinstance(function, VTypeClassMethod):
+        # Type class method - we need the evaluator to resolve this
+        # For now, return a neutral application
+        return VNeutral(NApp(NGlobal(function.method_name), argument))
     else:
         raise TypeError(f"Cannot apply {type(function)} to argument")
 

@@ -28,6 +28,8 @@ class TokenType(Enum):
     IMPORT = auto()    # import
     EXPORT = auto()    # export
     AS = auto()        # as
+    CLASS = auto()     # class
+    INSTANCE = auto()  # instance
     
     # Symbols
     LPAREN = auto()    # (
@@ -37,6 +39,7 @@ class TokenType(Enum):
     LBRACKET = auto()  # [
     RBRACKET = auto()  # ]
     ARROW = auto()     # ->
+    DOUBLE_ARROW = auto()  # =>
     LAMBDA = auto()    # \
     COLON = auto()     # :
     SEMICOLON = auto() # ;
@@ -89,6 +92,8 @@ class Lexer:
         'import': TokenType.IMPORT,
         'export': TokenType.EXPORT,
         'as': TokenType.AS,
+        'class': TokenType.CLASS,
+        'instance': TokenType.INSTANCE,
         'true': TokenType.BOOL,
         'false': TokenType.BOOL,
     }
@@ -101,6 +106,7 @@ class Lexer:
         '[': TokenType.LBRACKET,
         ']': TokenType.RBRACKET,
         '->': TokenType.ARROW,
+        '=>': TokenType.DOUBLE_ARROW,
         '::': TokenType.CONS,
         '\\': TokenType.LAMBDA,
         ':': TokenType.COLON,

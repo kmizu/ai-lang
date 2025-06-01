@@ -11,7 +11,8 @@ from enum import Enum, auto
 
 from .syntax import *
 from .core import *
-from .errors import TypeCheckError
+from .errors import TypeCheckError, ErrorContext, ErrorKind, get_trace
+from .error_reporting import format_type_for_display
 
 
 def format_type_for_error(type_val: Value) -> str:
@@ -111,6 +112,24 @@ class ModuleInfo:
 
 
 @dataclass
+class ClassInfo:
+    """Information about a type class."""
+    name: str
+    type_param: str
+    superclasses: List[Tuple[str, Value]]  # [(class_name, type)]
+    methods: Dict[str, Value]  # method_name -> method_type
+    
+
+@dataclass
+class InstanceInfo:
+    """Information about a type class instance."""
+    class_name: str
+    type_arg: Value
+    constraints: List[Tuple[str, Value]]  # prerequisite constraints
+    methods: Dict[str, Term]  # method_name -> implementation term
+
+
+@dataclass
 class TypeChecker:
     """Type checker state."""
     data_types: Dict[str, DataDecl]
@@ -120,8 +139,13 @@ class TypeChecker:
     modules: Dict[str, 'ModuleInfo']  # Loaded modules
     module_paths: List[str]  # Search paths for modules
     elaborated_terms: Dict[str, Term]  # Store elaborated terms for evaluation
+    type_classes: Dict[str, 'ClassInfo']  # Type class definitions
+    instances: Dict[str, List['InstanceInfo']]  # class_name -> list of instances
+    source_code: Optional[str]  # Source code for error reporting
+    filename: Optional[str]  # Filename for error reporting
+    current_location: Optional[SourceLocation]  # Current location being checked
     
-    def __init__(self):
+    def __init__(self, source_code: Optional[str] = None, filename: Optional[str] = None):
         self.data_types = {}
         self.constructors = {}
         self.global_types = {}
@@ -129,6 +153,40 @@ class TypeChecker:
         self.modules = {}
         self.module_paths = ['.', 'lib']  # Default search paths
         self.elaborated_terms = {}
+        self.source_code = source_code
+        self.filename = filename
+        self.current_location = None
+        self.type_classes = {}
+        self.instances = {}
+        
+        # Initialize built-in types
+        self._init_builtins()
+    
+    def _init_builtins(self):
+        """Initialize built-in types and constructors."""
+        # Add built-in types: Nat, Bool, String
+        self.global_types["Nat"] = VType(Level(0))
+        self.global_types["Bool"] = VType(Level(0))
+        self.global_types["String"] = VType(Level(0))
+        
+        # Add Bool constructors
+        true_info = DataConstructorInfo("True", VConstructor("Bool", []), "Bool", [], [])
+        false_info = DataConstructorInfo("False", VConstructor("Bool", []), "Bool", [], [])
+        self.constructors["True"] = true_info
+        self.constructors["False"] = false_info
+    
+    def raise_error(self, message: str, kind: Optional[ErrorKind] = None, 
+                   location: Optional[SourceLocation] = None, **kwargs) -> None:
+        """Raise a type check error with proper context."""
+        loc = location or self.current_location
+        context = ErrorContext(
+            source_code=self.source_code,
+            filename=self.filename,
+            location=loc,
+            kind=kind,
+            **kwargs
+        )
+        raise TypeCheckError(message, location=loc, context=context)
     
     def eval_with_globals(self, term: Term, env: Environment) -> Value:
         """Evaluate a term with global lookups."""
@@ -218,6 +276,140 @@ class TypeChecker:
         if value is not None:
             self.global_values[name] = value
     
+    def add_type_class(self, decl: ClassDecl, ctx: Context) -> None:
+        """Add a type class declaration."""
+        # Create context with type parameter
+        param_ctx = ctx.extend(decl.type_param.value, VType(Level(0)))
+        
+        # Convert superclass constraints
+        superclasses = []
+        for class_name, type_arg in decl.superclasses:
+            type_term = self.convert_type(type_arg, param_ctx)
+            type_val = self.eval_with_globals(type_term, param_ctx.environment)
+            superclasses.append((class_name.value, type_val))
+        
+        # Convert method types
+        methods = {}
+        for method_name, method_type in decl.methods:
+            method_type_term = self.convert_type(method_type, param_ctx)
+            method_type_val = self.eval_with_globals(method_type_term, param_ctx.environment)
+            methods[method_name.value] = method_type_val
+        
+        # Store class info
+        class_info = ClassInfo(
+            name=decl.name.value,
+            type_param=decl.type_param.value,
+            superclasses=superclasses,
+            methods=methods
+        )
+        self.type_classes[decl.name.value] = class_info
+        
+        # Add class type to globals (as a Type -> Type function)
+        # class Eq A means Eq : Type -> Type
+        class_type = VPi(decl.type_param.value, VType(Level(0)), 
+                        Closure(param_ctx.environment, TType(Level(0))), False)
+        self.add_global(decl.name.value, class_type)
+    
+    def add_instance(self, decl: InstanceDecl, ctx: Context) -> None:
+        """Add a type class instance."""
+        # Check that the class exists
+        if decl.class_name.value not in self.type_classes:
+            raise TypeCheckError(f"Unknown type class: {decl.class_name.value}")
+        
+        class_info = self.type_classes[decl.class_name.value]
+        
+        # Convert the instance type
+        type_term = self.convert_type(decl.type, ctx)
+        type_val = self.eval_with_globals(type_term, ctx.environment)
+        
+        # Convert constraints
+        constraints = []
+        for class_name, constraint_type in decl.constraints:
+            constraint_term = self.convert_type(constraint_type, ctx)
+            constraint_val = self.eval_with_globals(constraint_term, ctx.environment)
+            constraints.append((class_name.value, constraint_val))
+        
+        # Type check method implementations
+        method_impls = {}
+        for method_name, impl_expr in decl.methods:
+            if method_name.value not in class_info.methods:
+                raise TypeCheckError(f"Method {method_name.value} not in class {decl.class_name.value}")
+            
+            # Get expected method type by substituting the instance type
+            expected_type = self.substitute_in_type(class_info.methods[method_name.value], 
+                                                  class_info.type_param, type_val)
+            
+            # Convert and check implementation with type guidance
+            impl_term = self.convert_expr_with_type(impl_expr, expected_type, ctx)
+            method_impls[method_name.value] = impl_term
+        
+        # Check that all methods are implemented
+        for method_name in class_info.methods:
+            if method_name not in method_impls:
+                raise TypeCheckError(f"Missing implementation for method {method_name}")
+        
+        # Store instance info
+        instance_info = InstanceInfo(
+            class_name=decl.class_name.value,
+            type_arg=type_val,
+            constraints=constraints,
+            methods=method_impls
+        )
+        
+        if decl.class_name.value not in self.instances:
+            self.instances[decl.class_name.value] = []
+        self.instances[decl.class_name.value].append(instance_info)
+    
+    def substitute_in_type(self, type_val: Value, param_name: str, arg_val: Value) -> Value:
+        """Substitute a type argument in a type value."""
+        # For type class methods, we need to substitute the type parameter
+        # The type parameter 'A' is represented as de Bruijn index 0 in the method type
+        # We'll do a simple substitution for now
+        
+        if isinstance(type_val, VPi):
+            # For a function type like A -> A -> Bool, we need to substitute A with the concrete type
+            # First, substitute in the domain
+            new_domain = self.substitute_in_type(type_val.domain, param_name, arg_val)
+            
+            # For the codomain, we need to be careful
+            # If this Pi binds a variable, we need to preserve the binding
+            # Create a dummy variable to evaluate the codomain
+            dummy_var = VNeutral(NVar(1000))  # Use a high level to avoid conflicts
+            codomain_val = type_val.codomain_closure.apply(dummy_var)
+            new_codomain = self.substitute_in_type(codomain_val, param_name, arg_val)
+            
+            # Create a new closure that returns the substituted codomain
+            return VPi(type_val.name, new_domain, ConstantClosure(new_codomain), type_val.implicit)
+            
+        elif isinstance(type_val, VNeutral):
+            # Check if this is a type variable (de Bruijn index 0)
+            if isinstance(type_val.neutral, NVar) and type_val.neutral.level == 0:
+                # This is our type parameter, substitute it
+                return arg_val
+            return type_val
+            
+        elif isinstance(type_val, VConstructor):
+            # Substitute in constructor arguments if any
+            new_args = [self.substitute_in_type(arg, param_name, arg_val) for arg in type_val.args]
+            return VConstructor(type_val.name, new_args)
+            
+        # For other value types, return as-is
+        return type_val
+    
+    def resolve_instance(self, class_name: str, type_arg: Value, ctx: Context) -> Optional[InstanceInfo]:
+        """Resolve a type class instance."""
+        if class_name not in self.instances:
+            return None
+        
+        # Look for matching instance
+        for instance in self.instances[class_name]:
+            if self.equal_types(instance.type_arg, type_arg, ctx):
+                # Check that constraints are satisfied
+                # For now, we'll assume they are - full implementation would recursively resolve
+                return instance
+        
+        return None
+    
     def check_module(self, module: Module) -> None:
         """Type check a complete module."""
         ctx = Context()
@@ -238,6 +430,12 @@ class TypeChecker:
         """Type check a declaration."""
         if isinstance(decl, DataDecl):
             self.add_data_type(decl, ctx)
+        
+        elif isinstance(decl, ClassDecl):
+            self.add_type_class(decl, ctx)
+        
+        elif isinstance(decl, InstanceDecl):
+            self.add_instance(decl, ctx)
         
         elif isinstance(decl, TypeSignature):
             # Convert and check the type
@@ -300,6 +498,22 @@ class TypeChecker:
             var_val = VNeutral(NVar(len(new_ctx.environment.values) - 1))
             current_type = current_type.codomain_closure.apply(var_val)
         
+        # Handle constraint types (e.g., Eq A => A -> A -> Bool)
+        if isinstance(current_type, VConstraintPi):
+            # Add type class methods to context
+            for constraint in current_type.constraints:
+                class_name = constraint.class_name
+                if class_name in self.type_classes:
+                    class_info = self.type_classes[class_name]
+                    # Add each method of the type class to the context
+                    for method_name, method_type in class_info.methods.items():
+                        # The method type needs to be instantiated with the constraint's type argument
+                        instantiated_type = self.substitute_in_type(method_type, class_info.type_param, constraint.type_arg)
+                        new_ctx = new_ctx.extend(method_name, instantiated_type)
+            
+            # Unwrap to the body type
+            current_type = current_type.body
+        
         for pattern in clause.patterns:
             if not isinstance(current_type, VPi):
                 raise TypeCheckError(
@@ -322,8 +536,7 @@ class TypeChecker:
             current_type = current_type.codomain_closure.apply(var_val)
         
         # Check the body against the remaining type
-        body_term = self.convert_expr(clause.body, new_ctx)
-        self.check_type(body_term, current_type, new_ctx)
+        body_term = self.convert_expr_with_type(clause.body, current_type, new_ctx)
     
     def check_pattern(self, pattern: Pattern, expected_type: Value, ctx: Context) -> Context:
         """Type check a pattern and return extended context."""
@@ -335,7 +548,10 @@ class TypeChecker:
             # Constructor pattern
             ctor_name = pattern.constructor.value
             if ctor_name not in self.constructors:
-                raise TypeCheckError(f"Unknown constructor in pattern: {ctor_name}")
+                self.raise_error(f"Unknown constructor in pattern: {ctor_name}",
+                           kind=ErrorKind.UNKNOWN_CONSTRUCTOR,
+                           location=pattern.constructor.location if hasattr(pattern.constructor, 'location') else None,
+                           available_names=list(self.constructors.keys()))
             
             ctor_info = self.constructors[ctor_name]
             
@@ -375,9 +591,20 @@ class TypeChecker:
     
     def infer_type(self, term: Term, ctx: Context) -> Value:
         """Infer the type of a term."""
+        # Add type derivation trace
+        trace = get_trace()
+        if trace.enabled:
+            ctx_dict = {b.name: format_type_for_display(b.type) for b in ctx.bindings[-3:]}  # Show last 3 bindings
+            trace.add_step(f"Inferring type of {type(term).__name__}", 
+                          location=self.current_location,
+                          context=ctx_dict)
+        
         if isinstance(term, TType):
             # Type : Type(n+1)
-            return VType(term.level.succ())
+            result = VType(term.level.succ())
+            if trace.enabled:
+                trace.add_step(f"Type has type Type{term.level.succ().n}", result=format_type_for_display(result))
+            return result
         
         elif isinstance(term, TVar):
             return ctx.get_type(term.index)
@@ -400,8 +627,22 @@ class TypeChecker:
                 # For now, be more permissive - return Type0
                 return VType(Level(0))
         
+        elif isinstance(term, TConstraintPi):
+            # Check that all constraints are well-formed
+            for class_name, type_arg in term.constraints:
+                type_arg_type = self.infer_type(type_arg, ctx)
+                self.check_is_type(type_arg_type, ctx)
+            
+            # Check body type
+            body_type = self.infer_type(term.body, ctx)
+            self.check_is_type(body_type, ctx)
+            
+            # Constraint types have type Type
+            return VType(Level(0))
+        
         elif isinstance(term, TLambda):
-            raise TypeCheckError("Cannot infer type of lambda without annotation")
+            self.raise_error("Cannot infer type of lambda without annotation",
+                           kind=ErrorKind.MISSING_TYPE_ANNOTATION)
         
         elif isinstance(term, TApp):
             # Special handling for applications that may need delayed inference
@@ -438,6 +679,13 @@ class TypeChecker:
                 # Build the full application with implicit arguments
                 result_term = self.insert_implicit_args(term, fun_type, ctx)
                 return self.infer_type(result_term, ctx)
+            
+            # Handle constraint types
+            if isinstance(fun_type, VConstraintPi):
+                # We need to resolve instances for the constraints
+                # For now, just unwrap to the body type
+                # TODO: Implement full instance resolution
+                fun_type = fun_type.body
             
             # Check it's a Pi type
             if not isinstance(fun_type, VPi):
@@ -531,8 +779,11 @@ class TypeChecker:
                 # Normal application - infer and check
                 inferred_type = self.infer_type(term, ctx)
                 if not self.equal_types(inferred_type, expected_type, ctx):
-                    raise TypeCheckError(
-                        f"Type mismatch: expected {format_type_for_error(expected_type)}, got {format_type_for_error(inferred_type)}"
+                    self.raise_error(
+                        f"Type mismatch: expected {format_type_for_error(expected_type)}, got {format_type_for_error(inferred_type)}",
+                        kind=ErrorKind.TYPE_MISMATCH,
+                        expected=format_type_for_error(expected_type),
+                        actual=format_type_for_error(inferred_type)
                     )
         
         else:
@@ -1121,6 +1372,18 @@ class TypeChecker:
             param_name = ast_type.param_name.value if ast_type.param_name else "_"
             return TPi(param_name, domain, codomain, ast_type.implicit)
         
+        elif isinstance(ast_type, ConstraintType):
+            # Convert constraints
+            constraint_terms = []
+            for class_name, type_arg in ast_type.constraints:
+                type_arg_term = self.convert_type(type_arg, ctx)
+                constraint_terms.append((class_name.value, type_arg_term))
+            
+            # Convert body
+            body_term = self.convert_type(ast_type.body, ctx)
+            
+            return TConstraintPi(constraint_terms, body_term)
+        
         elif isinstance(ast_type, TypeApp):
             # Type application
             ctor = self.convert_type(ast_type.constructor, ctx)
@@ -1143,6 +1406,12 @@ class TypeChecker:
     
     def convert_expr(self, expr: Expr, ctx: Context) -> Term:
         """Convert AST expression to core term."""
+        # Update current location if available
+        if hasattr(expr, 'name') and hasattr(expr.name, 'location'):
+            self.current_location = expr.name.location
+        elif hasattr(expr, 'location'):
+            self.current_location = expr.location
+            
         if isinstance(expr, Var):
             result = ctx.lookup(expr.name.value)
             if result:
@@ -1166,7 +1435,26 @@ class TypeChecker:
                 # Create a global reference term
                 return TGlobal(expr.name.value)
             
-            raise TypeCheckError(f"Unknown variable: {expr.name.value}")
+            # Get all available names for suggestions
+            available_names = []
+            # Add local variables
+            for binding in ctx.bindings:
+                available_names.append(binding.name)
+            # Add constructors
+            available_names.extend(self.constructors.keys())
+            # Add global names
+            available_names.extend(self.global_types.keys())
+            
+            # Find similar names
+            from .error_reporting import suggest_similar_names
+            similar = suggest_similar_names(expr.name.value, available_names)
+            
+            self.raise_error(f"Unknown variable: {expr.name.value}",
+                           kind=ErrorKind.UNKNOWN_VARIABLE,
+                           location=expr.name.location if hasattr(expr.name, 'location') else None,
+                           actual=expr.name.value,
+                           available_names=available_names,
+                           similar_names=similar)
         
         elif isinstance(expr, Literal):
             return TLiteral(expr.value)
@@ -1260,12 +1548,53 @@ class TypeChecker:
             current = current.function
         
         return current, args
+    
+    def convert_expr_with_type(self, expr: Expr, expected_type: Value, ctx: Context) -> Term:
+        """Convert an expression to a term with type guidance."""
+        # Special handling for lambdas without type annotations
+        if isinstance(expr, Lambda) and not expr.param_type:
+            if not isinstance(expected_type, VPi):
+                raise TypeCheckError(f"Expected function type for lambda, got {expected_type}")
+            
+            # Use the domain type from the expected Pi type
+            param_type_val = expected_type.domain
+            
+            # Convert body in extended context
+            new_ctx = ctx.extend(expr.param.value, param_type_val)
+            # Apply the parameter to get the codomain type
+            param_var = VNeutral(NVar(len(ctx.bindings)))
+            codomain_type = expected_type.codomain_closure.apply(param_var)
+            body = self.convert_expr_with_type(expr.body, codomain_type, new_ctx)
+            
+            return TLambda(expr.param.value, body, expr.implicit)
+        
+        # For other expressions, use regular conversion and check
+        term = self.convert_expr(expr, ctx)
+        self.check_type(term, expected_type, ctx)
+        return term
 
 
-def type_check_module(module: Module, module_paths: Optional[List[str]] = None) -> TypeChecker:
-    """Type check a module and return the type checker with definitions."""
-    checker = TypeChecker()
+def type_check_module(module: Module, module_paths: Optional[List[str]] = None,
+                     return_checker: bool = False, source_code: Optional[str] = None,
+                     filename: Optional[str] = None) -> Union[TypeChecker, None]:
+    """Type check a module and optionally return the type checker with definitions.
+    
+    Args:
+        module: The module to type check
+        module_paths: Optional list of paths to search for modules
+        return_checker: If True, returns the TypeChecker instance. If False, returns None.
+        source_code: Optional source code for error reporting
+        filename: Optional filename for error reporting
+        
+    Returns:
+        TypeChecker instance if return_checker is True, None otherwise
+    """
+    checker = TypeChecker(source_code=source_code, filename=filename)
     if module_paths:
         checker.module_paths = module_paths
     checker.check_module(module)
-    return checker
+    
+    if return_checker:
+        return checker
+    else:
+        return None

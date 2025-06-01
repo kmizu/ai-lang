@@ -1,0 +1,9 @@
+-- Example: Type derivation trace in verbose mode
+-- Run with: ai-lang -v error_demo_verbose.ai
+
+identity : {A : Type} -> A -> A
+identity x = x
+
+-- This will show the type derivation steps
+main : Nat  
+main = identity {Nat} 42

@@ -26,6 +26,7 @@ Happy coding!
 - List literals with syntactic sugar `[1, 2, 3]`
 - Let bindings and local definitions
 - Module system (parsing complete, evaluation in progress)
+- **Optimization passes**: eta-reduction, dead code elimination, and function inlining
 
 ## Installation
 
@@ -94,6 +95,35 @@ twice f x = f (f x)
 -- Example usage with explicit type parameter
 example : Nat
 example = twice {Nat} S Z  -- Result: S (S Z)
+```
+
+## Optimization
+
+ai-lang includes several optimization passes that improve runtime performance:
+
+### Eta-reduction
+Converts `\x -> f x` to `f` when x doesn't appear free in f.
+
+### Dead Code Elimination  
+Removes unused functions and let bindings to reduce program size.
+
+### Function Inlining
+Inlines small, non-recursive functions at call sites to reduce function call overhead.
+
+### Using Optimizations
+
+```bash
+# Run with all optimizations (default)
+ai-lang program.ai
+
+# Disable optimization
+ai-lang program.ai --no-optimize
+
+# Run specific optimization passes
+ai-lang program.ai --opt-passes eta-reduction --opt-passes inlining
+
+# Show optimized AST
+ai-lang program.ai --show-optimized
 ```
 
 ## Current Limitations

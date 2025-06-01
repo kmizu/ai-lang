@@ -17,6 +17,13 @@ __version__ = "0.1.0"
 @click.option('--version', is_flag=True, help='Show version information')
 @click.option('--output', '-o', type=click.Path(), help='Output file for results')
 @click.option('--timing', is_flag=True, help='Show timing information')
+@click.option('--totality/--no-totality', default=True, help='Enable/disable totality checking')
+@click.option('--termination/--no-termination', default=True, help='Enable/disable termination checking')
+@click.option('--coverage/--no-coverage', default=True, help='Enable/disable coverage checking')
+@click.option('--positivity/--no-positivity', default=True, help='Enable/disable positivity checking')
+@click.option('--optimize/--no-optimize', default=True, help='Enable/disable optimization')
+@click.option('--opt-passes', multiple=True, help='Specific optimization passes to run (eta-reduction, dead-code-elimination, inlining)')
+@click.option('--show-optimized', is_flag=True, help='Show the optimized AST')
 def main(filename: Optional[str] = None, 
          ast: bool = False,
          type_check_only: bool = False,
@@ -24,7 +31,14 @@ def main(filename: Optional[str] = None,
          no_builtins: bool = False,
          version: bool = False,
          output: Optional[str] = None,
-         timing: bool = False) -> None:
+         timing: bool = False,
+         totality: bool = True,
+         termination: bool = True,
+         coverage: bool = True,
+         positivity: bool = True,
+         optimize: bool = True,
+         opt_passes: tuple = (),
+         show_optimized: bool = False) -> None:
     """ai-lang - A dependently-typed programming language.
     
     If FILENAME is provided, compile and run the file.
@@ -50,8 +64,11 @@ def main(filename: Optional[str] = None,
         # Compile and run file
         from ai_lang.parser import parse, ParseError
         from ai_lang.lexer import LexError
-        from ai_lang.typechecker import type_check_module, TypeCheckError
-        from ai_lang.evaluator import Evaluator, pretty_print_value, EvalError
+        from ai_lang.typechecker import type_check_module
+        from ai_lang.evaluator import Evaluator, pretty_print_value
+        from ai_lang.optimizer import Optimizer, OptimizationError
+        from ai_lang.errors import TypeCheckError, EvalError, ErrorContext, enable_trace, clear_trace
+        from ai_lang.error_reporting import AiLangError
         
         # Timing support
         if timing:
@@ -71,7 +88,7 @@ def main(filename: Optional[str] = None,
                 print("Parsing...")
             parse_start = time.time() if timing else 0
             
-            module = parse(source)
+            module = parse(source, filename)
             
             if timing:
                 parse_time = time.time() - parse_start
@@ -90,6 +107,7 @@ def main(filename: Optional[str] = None,
             # Type check
             if verbose:
                 print("Type checking...")
+                enable_trace()  # Enable type derivation tracing in verbose mode
             type_check_start = time.time() if timing else 0
             
             # Set up module paths
@@ -100,11 +118,74 @@ def main(filename: Optional[str] = None,
             if os.path.exists(lib_dir):
                 module_paths.append(lib_dir)
             
-            checker = type_check_module(module, module_paths)
+            checker = type_check_module(module, module_paths, return_checker=True, 
+                                       source_code=source, filename=filename)
             
             if timing:
                 type_check_time = time.time() - type_check_start
                 print(f"Type check time: {type_check_time:.3f}s")
+            
+            # Totality checking
+            if totality:
+                if verbose:
+                    print("Checking totality...")
+                totality_start = time.time() if timing else 0
+                
+                from ai_lang.totality import TotalityChecker, TotalityOptions, TotalityError
+                totality_options = TotalityOptions(
+                    check_termination=termination,
+                    check_coverage=coverage,
+                    check_positivity=positivity
+                )
+                totality_checker = TotalityChecker(checker, totality_options)
+                
+                try:
+                    warnings = totality_checker.check_module(module)
+                    if warnings and verbose:
+                        from ai_lang.colors import Colors
+                        for warning in warnings:
+                            print(Colors.warning(warning))
+                except TotalityError as e:
+                    from ai_lang.colors import Colors
+                    print(Colors.error(f"Totality error: {e}"), file=sys.stderr)
+                    sys.exit(1)
+                
+                if timing:
+                    totality_time = time.time() - totality_start
+                    print(f"Totality check time: {totality_time:.3f}s")
+            
+            # Optimization
+            optimized_module = module
+            if optimize:
+                if verbose:
+                    print("Optimizing...")
+                opt_start = time.time() if timing else 0
+                
+                optimizer = Optimizer(enabled=True)
+                if opt_passes:
+                    # Use specific optimization passes
+                    optimizer.set_passes(list(opt_passes))
+                
+                try:
+                    optimized_module = optimizer.optimize(module, checker)
+                except OptimizationError as e:
+                    from ai_lang.colors import Colors
+                    print(Colors.error(f"Optimization error: {e}"), file=sys.stderr)
+                    sys.exit(1)
+                
+                if timing:
+                    opt_time = time.time() - opt_start
+                    print(f"Optimization time: {opt_time:.3f}s")
+                
+                if show_optimized:
+                    output_content = f"Optimized Abstract Syntax Tree:\n{optimized_module}"
+                    if output:
+                        with open(output, 'w') as f:
+                            f.write(output_content)
+                        print(f"Optimized AST written to {output}")
+                    else:
+                        print(output_content)
+                    return
             
             if type_check_only:
                 from ai_lang.colors import Colors
@@ -117,7 +198,7 @@ def main(filename: Optional[str] = None,
             eval_start = time.time() if timing else 0
             
             evaluator = Evaluator(checker, trace=verbose)
-            evaluator.eval_module(module)
+            evaluator.eval_module(optimized_module)
             
             if timing:
                 eval_time = time.time() - eval_start
@@ -152,23 +233,51 @@ def main(filename: Optional[str] = None,
             print(error_msg, file=sys.stderr)
             sys.exit(1)
         except (LexError, ParseError) as e:
-            error_msg = f"Syntax error: {e}"
-            print(error_msg, file=sys.stderr)
-            if verbose and hasattr(e, 'location') and e.location:
-                show_error_context(source, e.location)
+            if isinstance(e, AiLangError):
+                # Use enhanced error formatting
+                if not e.context.source_code:
+                    e.context.source_code = source
+                if not e.context.filename:
+                    e.context.filename = filename
+                print(e.format_error(), file=sys.stderr)
+            else:
+                # Fallback for old-style errors
+                error_msg = f"Syntax error: {e}"
+                print(error_msg, file=sys.stderr)
+                if verbose and hasattr(e, 'location') and e.location:
+                    show_error_context(source, e.location)
             sys.exit(1)
         except TypeCheckError as e:
-            error_msg = f"Type error: {e}"
-            print(error_msg, file=sys.stderr)
-            if verbose:
-                import traceback
-                traceback.print_exc()
-            if verbose and hasattr(e, 'location') and e.location:
-                show_error_context(source, e.location)
+            if isinstance(e, AiLangError):
+                # Use enhanced error formatting
+                if not e.context.source_code:
+                    e.context.source_code = source
+                if not e.context.filename:
+                    e.context.filename = filename
+                print(e.format_error(), file=sys.stderr)
+            else:
+                # Fallback for old-style errors
+                error_msg = f"Type error: {e}"
+                print(error_msg, file=sys.stderr)
+                if verbose:
+                    import traceback
+                    traceback.print_exc()
+                if verbose and hasattr(e, 'location') and e.location:
+                    show_error_context(source, e.location)
+            clear_trace()  # Clear trace for next run
             sys.exit(1)
         except EvalError as e:
-            error_msg = f"Runtime error: {e}"
-            print(error_msg, file=sys.stderr)
+            if isinstance(e, AiLangError):
+                # Use enhanced error formatting
+                if not e.context.source_code:
+                    e.context.source_code = source
+                if not e.context.filename:
+                    e.context.filename = filename
+                print(e.format_error(), file=sys.stderr)
+            else:
+                # Fallback for old-style errors
+                error_msg = f"Runtime error: {e}"
+                print(error_msg, file=sys.stderr)
             sys.exit(1)
         except KeyboardInterrupt:
             print("\nInterrupted", file=sys.stderr)

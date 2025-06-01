@@ -1,0 +1,9 @@
+-- Example 2: Type mismatch error
+-- Shows enhanced error formatting with source location
+
+-- Since + is not built-in, let's use a simpler example
+const : Nat -> Nat -> Nat
+const x y = x
+
+main : Nat
+main = const 42 "hello"  -- Error: Type mismatch - expected Nat, got String

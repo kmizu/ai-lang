@@ -1,0 +1,5 @@
+-- Example 1: Unknown variable error
+-- This demonstrates improved error messages with suggestions
+
+main : Nat
+main = let x = 42 in let y = 17 in z  -- Error: unknown variable 'z', did you mean 'x' or 'y'?

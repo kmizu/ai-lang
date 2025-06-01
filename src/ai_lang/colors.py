@@ -89,6 +89,16 @@ class Colors:
     def operator(cls, text: str) -> str:
         """Format operator."""
         return f"{cls.YELLOW}{text}{cls.RESET}"
+    
+    @classmethod
+    def var_name(cls, text: str) -> str:
+        """Format variable name."""
+        return f"{cls.BRIGHT_BLUE}{text}{cls.RESET}"
+    
+    @classmethod
+    def hint(cls, text: str) -> str:
+        """Format hint text."""
+        return f"{cls.BRIGHT_CYAN}{text}{cls.RESET}"
 
 
 def disable_colors():

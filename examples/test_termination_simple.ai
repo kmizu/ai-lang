@@ -1,0 +1,31 @@
+-- Simple example for testing termination checking
+
+data Nat : Type where
+  Z : Nat
+  S : Nat -> Nat
+
+-- Good: Structural recursion (terminating)
+plus : Nat -> Nat -> Nat
+plus Z m = m
+plus (S n) m = S (plus n m)
+
+-- Good: Another structural recursion
+mult : Nat -> Nat -> Nat
+mult Z m = Z
+mult (S n) m = plus m (mult n m)
+
+-- Good: More complex but still structural
+factorial : Nat -> Nat
+factorial Z = S Z
+factorial (S n) = mult (S n) (factorial n)
+
+-- Bad: Non-terminating (uncomment to test)
+loop : Nat -> Nat
+loop n = loop n
+
+-- Bad: Increasing recursion (uncomment to test)  
+-- bad : Nat -> Nat
+-- bad n = bad (S n)
+
+main : Nat
+main = factorial (S (S (S Z)))

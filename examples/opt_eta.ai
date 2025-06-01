@@ -1,0 +1,16 @@
+-- Test eta-reduction optimization
+
+data Bool : Type where
+    True : Bool
+    False : Bool
+
+-- Identity function
+id : Bool -> Bool
+id x = x
+
+-- Function with an eta-reducible lambda
+wrapper : Bool -> Bool
+wrapper = (\x -> id x)
+
+main : Bool
+main = wrapper True

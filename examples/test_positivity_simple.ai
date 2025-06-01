@@ -1,0 +1,30 @@
+-- Simple example for testing positivity checking
+
+-- Good: Simple recursive type
+data Nat : Type where
+  Z : Nat
+  S : Nat -> Nat
+
+-- Good: Parameterized recursive type  
+data List (A : Type) : Type where
+  Nil : {A : Type} -> List A
+  Cons : {A : Type} -> A -> List A -> List A
+
+-- Good: Type appears only in positive positions
+data Tree (A : Type) : Type where
+  Leaf : {A : Type} -> A -> Tree A
+  Node : {A : Type} -> Tree A -> Tree A -> Tree A
+
+-- Bad: Negative occurrence (uncomment to test)
+-- data Bad : Type where
+--   MkBad : (Bad -> Nat) -> Bad
+
+-- This would allow us to write non-terminating programs like:
+-- omega : Bad -> Nat
+-- omega (MkBad f) = f (MkBad f)
+-- 
+-- loop : Nat
+-- loop = omega (MkBad omega)
+
+main : Nat
+main = S (S Z)

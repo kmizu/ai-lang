@@ -1,0 +1,8 @@
+-- Example: Constructor error with suggestions
+
+data Option (A : Type) : Type where
+  None : Option A
+  Some : A -> Option A
+
+main : Option Nat
+main = Non 42  -- Error: Unknown constructor 'Non', did you mean 'None'?

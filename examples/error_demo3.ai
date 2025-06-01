@@ -1,0 +1,8 @@
+-- Example 3: Wrong number of arguments
+-- Demonstrates arity checking with helpful hints
+
+identity : {A : Type} -> A -> A  
+identity x = x
+
+main : Nat
+main = identity 42 17  -- Error: Too many arguments to function
