@@ -1,0 +1,16 @@
+-- Simplified test for parameterized data types
+
+data Nat : Type where
+  Z : Nat
+  S : Nat -> Nat
+
+data List A : Type where
+  Nil : List A
+  Cons : A -> List A -> List A
+
+-- Just test constructor
+nilTest : List Nat  
+nilTest = Nil {Nat}
+
+main : Nat
+main = Z

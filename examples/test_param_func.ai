@@ -1,0 +1,20 @@
+-- Test parameterized functions
+
+data Nat : Type where
+  Z : Nat
+  S : Nat -> Nat
+
+data List A : Type where
+  Nil : List A
+  Cons : A -> List A -> List A
+
+-- Polymorphic identity
+id : {A : Type} -> A -> A
+id x = x
+
+-- Test using id
+testId : Nat
+testId = id {Nat} Z
+
+main : Nat
+main = testId

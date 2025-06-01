@@ -1,0 +1,13 @@
+-- Test module imports
+
+import List
+
+data Nat : Type where
+  Z : Nat
+  S : Nat -> Nat
+
+myList : List Nat
+myList = Cons {Nat} Z (Nil {Nat})
+
+main : Nat
+main = head {Nat} myList (S Z)

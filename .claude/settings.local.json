@@ -120,7 +120,8 @@
       "Bash(PYTHONPATH:*)",
       "Bash(nl:*)",
       "Bash(poetry run pytest:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git reset:*)"
     ],
     "deny": []
   }

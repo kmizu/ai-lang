@@ -1,0 +1,22 @@
+-- Test parameterized data types
+
+data Nat : Type where
+  Z : Nat
+  S : Nat -> Nat
+
+data List A : Type where
+  Nil : List A
+  Cons : A -> List A -> List A
+
+-- Simple list of naturals
+natList : List Nat
+natList = Cons {Nat} (S Z) (Cons {Nat} (S (S Z)) (Nil {Nat}))
+
+-- Function to get head of list  
+head : {A : Type} -> List A -> A -> A
+head Nil default = default
+head (Cons x xs) default = x
+
+-- Test
+main : Nat
+main = head {Nat} natList 0

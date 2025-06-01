@@ -1,0 +1,6 @@
+-- List module
+
+data List A : Type where
+  Nil : List A
+  Cons : A -> List A -> List A
+

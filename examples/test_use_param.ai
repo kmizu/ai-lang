@@ -1,0 +1,16 @@
+-- Test using type parameter
+
+data Nat : Type where
+  Z : Nat
+  S : Nat -> Nat
+
+data List A : Type where
+  Nil : List A
+  Cons : A -> List A -> List A
+
+-- Function that returns the list type
+nilOf : {A : Type} -> A -> List A
+nilOf x = Nil {A}
+
+main : List Nat
+main = nilOf {Nat} Z
